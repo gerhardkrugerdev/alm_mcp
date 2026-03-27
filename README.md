@@ -1,6 +1,8 @@
-# Helix ALM MCP Server
+# Perforce ALM MCP Server
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that connects Claude (and other MCP-compatible AI assistants) to the [Helix ALM](https://www.perforce.com/products/helix-alm) REST API. It lets you manage requirements, test cases, documents, and automation results directly from a conversation — with optional Azure DevOps integration for pulling CI/CD test results into Helix ALM.
+> **Note:** Helix ALM has been rebranded to **Perforce ALM**. This server targets the Perforce ALM (formerly Helix ALM) REST API. Environment variables, tool names, and configuration keys still use the `HELIX_ALM_` prefix for backwards compatibility.
+
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that connects Claude (and other MCP-compatible AI assistants) to the [Perforce ALM](https://www.perforce.com/products/helix-alm) (formerly Helix ALM) REST API. It lets you manage requirements, test cases, documents, and automation results directly from a conversation — with optional Azure DevOps integration for pulling CI/CD test results into Perforce ALM.
 
 ---
 
@@ -10,7 +12,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that c
 - **Test Cases** — create test cases with structured steps and link them to requirements
 - **Requirement Documents** — browse document trees, add requirements to sections
 - **Automation Suites** — submit test run results (manually, from JUnit/xUnit XML, or from Azure DevOps builds)
-- **Azure DevOps** — pull test results from a build and push them straight into a Helix ALM automation suite
+- **Azure DevOps** — pull test results from a build and push them straight into a Perforce ALM automation suite
 - **Session-based auth** — credentials are held in memory only and never written to disk
 
 ---
@@ -19,7 +21,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that c
 
 - Python 3.11+
 - [`mcp`](https://pypi.org/project/mcp/) package (`pip install mcp`)
-- A running Helix ALM server (v24 or later recommended) with the REST API enabled
+- A running Perforce ALM server (formerly Helix ALM, v24 or later recommended) with the REST API enabled
 - An API token (recommended) or username/password
 
 ---
@@ -92,7 +94,7 @@ Credentials set via environment variables are loaded at startup. You can overrid
 ### Configuration
 
 #### `configure_helix_alm`
-Configure the Helix ALM connection for the current session.
+Configure the Perforce ALM (formerly Helix ALM) connection for the current session.
 
 | Argument | Description |
 |----------|-------------|
@@ -111,7 +113,7 @@ Configure the Azure DevOps connection for the current session.
 | `pat` | Personal access token |
 
 #### `get_connection_status`
-Returns the current connection state for both Helix ALM and Azure DevOps (without revealing credentials).
+Returns the current connection state for both Perforce ALM and Azure DevOps (without revealing credentials).
 
 ---
 
@@ -119,7 +121,7 @@ Returns the current connection state for both Helix ALM and Azure DevOps (withou
 
 | Tool | Description |
 |------|-------------|
-| `list_projects` | List all projects available in Helix ALM |
+| `list_projects` | List all projects available in Perforce ALM |
 | `list_requirements` | List requirements in a project (supports column selection and saved filters) |
 | `get_requirement` | Get full details of a single requirement by tag (e.g. `BR-1960`) or numeric ID |
 | `get_requirement_types` | List the requirement types configured in a project |
@@ -149,7 +151,7 @@ and description "The system must support SAML 2.0 SSO for all users."
 
 | Argument | Description |
 |----------|-------------|
-| `project_name` | Helix ALM project name |
+| `project_name` | Perforce ALM project name |
 | `summary` | Test case title |
 | `test_case_type` | Type menu item (e.g. `"Validation"`, `"Functional"`). Defaults to `"Validation"` |
 | `description` | Detailed description |
@@ -169,7 +171,7 @@ and description "The system must support SAML 2.0 SSO for all users."
 
 | Argument | Description |
 |----------|-------------|
-| `project_name` | Helix ALM project name |
+| `project_name` | Perforce ALM project name |
 | `test_case_identifier` | Test case tag (e.g. `TC-42`) or numeric ID |
 | `requirement_identifier` | Requirement tag (e.g. `BR-1960`) or numeric ID |
 | `link_type` | Link definition name. Defaults to `"Requirement Tested By"` |
@@ -231,13 +233,13 @@ Sample XML files are provided in the `samples/` directory.
 | `azdo_list_pipelines` | List build pipelines in an Azure DevOps project |
 | `azdo_list_builds` | List recent builds, optionally filtered by pipeline |
 | `azdo_get_test_results` | Get test results from a specific build |
-| `azdo_submit_to_helix_alm` | Fetch results from a build and submit them to a Helix ALM automation suite |
+| `azdo_submit_to_helix_alm` | Fetch results from a build and submit them to a Perforce ALM automation suite |
 | `azdo_submit_latest_to_helix_alm` | Same as above but automatically picks the latest completed build |
 
 **Example end-to-end:**
 ```
 Fetch the latest completed build from Azure DevOps pipeline 42 and submit
-the test results to Helix ALM automation suite 7 in project "My Project".
+the test results to Perforce ALM automation suite 7 in project "My Project".
 ```
 
 ---
@@ -248,7 +250,7 @@ All variables are optional — the server falls back to the `configure_*` tools 
 
 | Variable | Description |
 |----------|-------------|
-| `HELIX_ALM_URL` | Helix ALM server base URL |
+| `HELIX_ALM_URL` | Perforce ALM server base URL |
 | `HELIX_ALM_USER` | Username for basic auth |
 | `HELIX_ALM_PASSWORD` | Password for basic auth |
 | `HELIX_ALM_API_KEY` | API key (preferred) |
@@ -264,4 +266,4 @@ All variables are optional — the server falls back to the `configure_*` tools 
 
 - Credentials are **never written to disk** — they exist only in the process memory for the lifetime of the session.
 - The `.env` file is excluded from version control via `.gitignore`. Use `.env.example` as a template.
-- SSL verification is disabled by default to support self-signed certificates common in on-premise Helix ALM deployments. Enable it (`ssl_verify=true`) when connecting to servers with a trusted certificate.
+- SSL verification is disabled by default to support self-signed certificates common in on-premise Perforce ALM deployments. Enable it (`ssl_verify=true`) when connecting to servers with a trusted certificate.
