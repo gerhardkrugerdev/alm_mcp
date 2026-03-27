@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Headphone Firmware Test Suite" tests="12" failures="1" errors="0" skipped="3" time="34.290">
+  <testsuite name="com.headphone.bluetooth.ConnectionTests" tests="4" failures="0" errors="0" skipped="1" time="8.541">
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testBluetoothPairing" time="2.760">
+    </testcase>
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testMultiPointConnection" time="3.215">
+    </testcase>
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testAutoReconnect" time="2.566">
+    </testcase>
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testCodecNegotiation" time="0.000">
+      <skipped message="LDAC codec module not installed on test host"/>
+    </testcase>
+  </testsuite>
+  <testsuite name="com.headphone.audio.PlaybackTests" tests="4" failures="0" errors="0" skipped="1" time="12.305">
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testPlayPauseResume" time="4.330">
+    </testcase>
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testVolumeControl" time="2.975">
+    </testcase>
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testNoiseCancellation" time="5.000">
+    </testcase>
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testSpatialAudio" time="0.000">
+      <skipped message="Spatial audio hardware not available on test device"/>
+    </testcase>
+  </testsuite>
+  <testsuite name="com.headphone.firmware.OTATests" tests="4" failures="1" errors="0" skipped="1" time="13.444">
+    <testcase classname="com.headphone.firmware.OTATests" name="testFirmwareDownload" time="3.650">
+    </testcase>
+    <testcase classname="com.headphone.firmware.OTATests" name="testFirmwareApply" time="5.780">
+    </testcase>
+    <testcase classname="com.headphone.firmware.OTATests" name="testFirmwareRollback" time="4.014">
+      <failure message="Rollback left device in inconsistent state" type="AssertionError">
+Expected: all settings restored to pre-update values
+Actual: EQ profile reset to factory defaults after rollback
+User custom EQ preset "Bass Boost" was lost during rollback process.
+      </failure>
+    </testcase>
+    <testcase classname="com.headphone.firmware.OTATests" name="testLowBatteryUpdateBlock" time="0.000">
+      <skipped message="Battery simulation hardware not connected"/>
+    </testcase>
+  </testsuite>
+</testsuites>

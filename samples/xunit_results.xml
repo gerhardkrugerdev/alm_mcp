@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<assemblies>
+  <assembly name="HeadphoneApp.Tests" run-date="2026-03-26" run-time="11:30:00" total="10" passed="6" failed="2" skipped="2" errors="0" time="32.615">
+    <collection name="HeadphoneApp.Tests.DeviceManagement" total="4" passed="3" failed="1" skipped="0" time="14.221">
+      <test name="HeadphoneApp.Tests.DeviceManagement.TestBatteryLevelDisplay" type="HeadphoneApp.Tests.DeviceManagement" method="TestBatteryLevelDisplay" time="3.102" result="Pass">
+        <output>Battery level correctly displayed at 78%.</output>
+      </test>
+      <test name="HeadphoneApp.Tests.DeviceManagement.TestFirmwareUpdateNotification" type="HeadphoneApp.Tests.DeviceManagement" method="TestFirmwareUpdateNotification" time="4.510" result="Pass">
+        <output>Update notification shown for version 2.3.0.</output>
+      </test>
+      <test name="HeadphoneApp.Tests.DeviceManagement.TestDevicePairingFlow" type="HeadphoneApp.Tests.DeviceManagement" method="TestDevicePairingFlow" time="3.891" result="Pass">
+        <output>Device paired successfully via Bluetooth 5.2.</output>
+      </test>
+      <test name="HeadphoneApp.Tests.DeviceManagement.TestMultiDeviceSwitch" type="HeadphoneApp.Tests.DeviceManagement" method="TestMultiDeviceSwitch" time="2.718" result="Fail">
+        <failure exception-type="Xunit.Sdk.EqualException">
+          <message>Assert.Equal() Failure
+Expected: "Laptop Audio"
+Actual:   "Phone Audio"
+Audio source did not switch when selecting second paired device.</message>
+          <stack-trace>   at HeadphoneApp.Tests.DeviceManagement.TestMultiDeviceSwitch() in DeviceManagementTests.cs:line 87</stack-trace>
+        </failure>
+      </test>
+    </collection>
+    <collection name="HeadphoneApp.Tests.AudioSettings" total="3" passed="2" failed="1" skipped="0" time="9.445">
+      <test name="HeadphoneApp.Tests.AudioSettings.TestEqualizerPresets" type="HeadphoneApp.Tests.AudioSettings" method="TestEqualizerPresets" time="2.334" result="Pass">
+        <output>All 5 equalizer presets loaded and applied correctly.</output>
+      </test>
+      <test name="HeadphoneApp.Tests.AudioSettings.TestCustomEQSave" type="HeadphoneApp.Tests.AudioSettings" method="TestCustomEQSave" time="3.210" result="Pass">
+        <output>Custom EQ profile saved and restored after app restart.</output>
+      </test>
+      <test name="HeadphoneApp.Tests.AudioSettings.TestANCLevelPersistence" type="HeadphoneApp.Tests.AudioSettings" method="TestANCLevelPersistence" time="3.901" result="Fail">
+        <failure exception-type="Xunit.Sdk.EqualException">
+          <message>Assert.Equal() Failure
+Expected: ANC Level 3
+Actual:   ANC Level 1
+Noise cancellation level reset to default after Bluetooth reconnection.</message>
+          <stack-trace>   at HeadphoneApp.Tests.AudioSettings.TestANCLevelPersistence() in AudioSettingsTests.cs:line 112</stack-trace>
+        </failure>
+      </test>
+    </collection>
+    <collection name="HeadphoneApp.Tests.Accessibility" total="3" passed="1" failed="0" skipped="2" time="8.949">
+      <test name="HeadphoneApp.Tests.Accessibility.TestScreenReaderNavigation" type="HeadphoneApp.Tests.Accessibility" method="TestScreenReaderNavigation" time="8.949" result="Pass">
+        <output>All 24 interactive elements accessible via VoiceOver.</output>
+      </test>
+      <test name="HeadphoneApp.Tests.Accessibility.TestHighContrastMode" type="HeadphoneApp.Tests.Accessibility" method="TestHighContrastMode" time="0.000" result="Skip">
+        <reason><![CDATA[High contrast mode not yet implemented in current build.]]></reason>
+      </test>
+      <test name="HeadphoneApp.Tests.Accessibility.TestVoiceCommandIntegration" type="HeadphoneApp.Tests.Accessibility" method="TestVoiceCommandIntegration" time="0.000" result="Skip">
+        <reason><![CDATA[Voice command feature scheduled for v3.0 release.]]></reason>
+      </test>
+    </collection>
+  </assembly>
+</assemblies>

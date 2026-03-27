@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Headphone Firmware Test Suite" tests="12" failures="3" errors="0" skipped="2" time="45.832">
+  <testsuite name="com.headphone.bluetooth.ConnectionTests" tests="4" failures="1" errors="0" skipped="0" time="12.451">
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testBluetoothPairing" time="3.210">
+    </testcase>
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testMultiPointConnection" time="4.102">
+      <failure message="Second device failed to connect within timeout" type="AssertionError">
+Expected: connected to 2 devices
+Actual: connected to 1 device
+Timeout after 10000ms waiting for second device connection.
+      </failure>
+    </testcase>
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testAutoReconnect" time="2.891">
+    </testcase>
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testCodecNegotiation" time="2.248">
+    </testcase>
+  </testsuite>
+  <testsuite name="com.headphone.audio.PlaybackTests" tests="4" failures="1" errors="0" skipped="1" time="18.334">
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testPlayPauseResume" time="5.120">
+    </testcase>
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testVolumeControl" time="3.445">
+    </testcase>
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testNoiseCancellation" time="6.891">
+      <failure message="ANC level did not reach target threshold" type="AssertionError">
+Expected noise reduction: >= 25 dB
+Actual noise reduction: 18 dB
+Test environment: controlled noise chamber at 80 dB ambient.
+      </failure>
+    </testcase>
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testSpatialAudio" time="0.000">
+      <skipped message="Spatial audio hardware not available on test device"/>
+    </testcase>
+  </testsuite>
+  <testsuite name="com.headphone.firmware.OTATests" tests="4" failures="1" errors="0" skipped="1" time="15.047">
+    <testcase classname="com.headphone.firmware.OTATests" name="testFirmwareDownload" time="4.230">
+    </testcase>
+    <testcase classname="com.headphone.firmware.OTATests" name="testFirmwareApply" time="6.102">
+    </testcase>
+    <testcase classname="com.headphone.firmware.OTATests" name="testFirmwareRollback" time="4.715">
+      <failure message="Rollback did not restore previous firmware version" type="AssertionError">
+Expected version after rollback: 2.1.0
+Actual version after rollback: 2.2.0-beta
+Rollback trigger: simulated power loss during update.
+      </failure>
+    </testcase>
+    <testcase classname="com.headphone.firmware.OTATests" name="testLowBatteryUpdateBlock" time="0.000">
+      <skipped message="Battery simulation hardware not connected"/>
+    </testcase>
+  </testsuite>
+</testsuites>

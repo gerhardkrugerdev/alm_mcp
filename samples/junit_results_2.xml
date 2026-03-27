@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Headphone Firmware Test Suite" tests="12" failures="4" errors="0" skipped="0" time="52.198">
+  <testsuite name="com.headphone.bluetooth.ConnectionTests" tests="4" failures="2" errors="0" skipped="0" time="15.670">
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testBluetoothPairing" time="4.512">
+      <failure message="Pairing failed with authentication error" type="AssertionError">
+Expected: pairing state BONDED
+Actual: pairing state BOND_NONE
+Device reported error code 0x05 (authentication failure) after PIN exchange.
+      </failure>
+    </testcase>
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testMultiPointConnection" time="3.891">
+    </testcase>
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testAutoReconnect" time="3.450">
+      <failure message="Device did not reconnect after signal drop" type="AssertionError">
+Expected: reconnected within 5000ms
+Actual: no reconnection after 15000ms
+Signal was dropped for 2000ms then restored to full strength.
+      </failure>
+    </testcase>
+    <testcase classname="com.headphone.bluetooth.ConnectionTests" name="testCodecNegotiation" time="3.817">
+    </testcase>
+  </testsuite>
+  <testsuite name="com.headphone.audio.PlaybackTests" tests="4" failures="1" errors="0" skipped="0" time="19.442">
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testPlayPauseResume" time="4.670">
+    </testcase>
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testVolumeControl" time="3.890">
+      <failure message="Volume step increment was non-linear" type="AssertionError">
+Expected volume at step 8: 50% (+/- 2%)
+Actual volume at step 8: 37%
+Volume curve deviated from target profile by more than 10%.
+      </failure>
+    </testcase>
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testNoiseCancellation" time="7.102">
+    </testcase>
+    <testcase classname="com.headphone.audio.PlaybackTests" name="testSpatialAudio" time="3.780">
+    </testcase>
+  </testsuite>
+  <testsuite name="com.headphone.firmware.OTATests" tests="4" failures="1" errors="0" skipped="0" time="17.086">
+    <testcase classname="com.headphone.firmware.OTATests" name="testFirmwareDownload" time="4.550">
+    </testcase>
+    <testcase classname="com.headphone.firmware.OTATests" name="testFirmwareApply" time="5.930">
+      <failure message="Firmware apply failed with verification error" type="AssertionError">
+Expected: firmware version 2.3.0 active after reboot
+Actual: device stuck in bootloader mode
+Flash write completed but signature verification returned INVALID.
+      </failure>
+    </testcase>
+    <testcase classname="com.headphone.firmware.OTATests" name="testFirmwareRollback" time="3.901">
+    </testcase>
+    <testcase classname="com.headphone.firmware.OTATests" name="testLowBatteryUpdateBlock" time="2.705">
+    </testcase>
+  </testsuite>
+</testsuites>
