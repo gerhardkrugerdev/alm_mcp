@@ -9,7 +9,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that c
 ## Features
 
 - **Requirements** — list, search, create, update, delete, and trigger workflow events
-- **Test Cases** — create test cases with structured steps and link them to requirements
+- **Test Cases** — create, read, and update test cases with structured steps; link them to requirements
 - **Requirement Documents** — browse document trees, add requirements to sections
 - **Automation Suites** — submit test run results (manually, from JUnit/xUnit XML, or from Azure DevOps builds)
 - **Azure DevOps** — pull test results from a build and push them straight into a Perforce ALM automation suite
@@ -144,7 +144,9 @@ and description "The system must support SAML 2.0 SSO for all users."
 
 | Tool | Description |
 |------|-------------|
-| `create_test_case` | Create a new test case with optional steps |
+| `create_test_case` | Create a new test case with optional steps (steps are added via a separate PUT to the `/steps` sub-resource after creation) |
+| `get_test_case` | Get full details of a test case by tag or ID, including steps and linked items |
+| `update_test_case` | Update fields and/or steps on an existing test case |
 | `link_test_case_to_requirement` | Link a test case to a requirement using the "Requirement Tested By" traceability link |
 
 #### `create_test_case` arguments
@@ -166,6 +168,31 @@ and description "The system must support SAML 2.0 SSO for all users."
   {"text": "Enter valid credentials", "expectedResult": "User is redirected to the dashboard"}
 ]
 ```
+
+> **Note:** The Perforce ALM REST API does not support adding steps inline during test case creation (POST). This server automatically handles this by creating the test case first, then adding steps via a PUT to the `/testCases/{id}/steps` sub-resource using the `detailed` step format.
+
+#### `get_test_case` arguments
+
+| Argument | Description |
+|----------|-------------|
+| `project_name` | Perforce ALM project name |
+| `test_case_identifier` | Test case tag (e.g. `TC-382`) or numeric ID |
+
+Returns the test case fields, all steps (with expected results), and linked items. Steps are fetched from the `/steps` sub-resource since the main test case endpoint does not include them.
+
+#### `update_test_case` arguments
+
+| Argument | Description |
+|----------|-------------|
+| `project_name` | Perforce ALM project name |
+| `test_case_identifier` | Test case tag (e.g. `TC-382`) or numeric ID |
+| `summary` | New summary (leave empty to keep current) |
+| `description` | New description (leave empty to keep current) |
+| `test_case_type` | New Type value (leave empty to keep current) |
+| `steps_json` | JSON array of steps to replace existing steps (same format as `create_test_case`) |
+| `additional_fields` | JSON object of extra field values |
+
+All arguments are optional — only the fields you provide will be updated. Steps are replaced entirely (not merged).
 
 #### `link_test_case_to_requirement` arguments
 
