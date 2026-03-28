@@ -138,6 +138,55 @@ def _get_token(project_name: str) -> str | None:
     return result["data"].get("accessToken") if result["data"] else None
 
 
+# --- Steps helpers ---
+
+def _build_steps_payload(steps_json: str) -> dict | str:
+    """Parse steps_json and build the stepsData payload for the Helix ALM API.
+    Returns the stepsData dict on success, or an error string on failure."""
+    try:
+        steps_input = json.loads(steps_json)
+        if not isinstance(steps_input, list):
+            return "Error: steps_json must be a JSON array."
+        detailed_steps = []
+        for i, s in enumerate(steps_input, start=1):
+            step_rows = []
+            if s.get("expectedResult"):
+                step_rows.append({
+                    "type": "expectedResult",
+                    "expectedResult": {
+                        "text": s["expectedResult"],
+                        "fileReferences": [],
+                    },
+                })
+            detailed_steps.append({
+                "type": "step",
+                "step": {
+                    "number": i,
+                    "text": s.get("text", ""),
+                    "stepRows": step_rows,
+                },
+            })
+        return {
+            "stepsData": {
+                "type": "detailed",
+                "modifiedToCorrectSyntax": False,
+                "basic": [],
+                "detailed": detailed_steps,
+            }
+        }
+    except json.JSONDecodeError:
+        return "Error: steps_json must be a valid JSON string."
+
+
+def _put_steps(project_name: str, token: str, tc_id: int, steps_payload: dict) -> str | None:
+    """PUT steps to a test case via the /steps sub-resource. Returns error string or None on success."""
+    proj = _encode_project(project_name)
+    result = _request(f"{proj}/testCases/{tc_id}/steps", token, steps_payload, "PUT")
+    if result.get("error"):
+        return f"Error adding steps: {json.dumps(result, indent=2)}"
+    return None
+
+
 # --- Field helpers ---
 
 def _get_field(fields: list, label: str):
@@ -819,40 +868,12 @@ def create_test_case(
         except json.JSONDecodeError:
             return "Error: additional_fields must be a valid JSON string."
 
+    # Parse steps ahead of time (but don't add inline — API ignores inline steps)
+    steps_payload = None
     if steps_json:
-        try:
-            steps_input = json.loads(steps_json)
-            if not isinstance(steps_input, list):
-                return "Error: steps_json must be a JSON array."
-            basic_steps = []
-            for i, s in enumerate(steps_input, start=1):
-                step_rows = []
-                if s.get("expectedResult"):
-                    step_rows.append({
-                        "type": "expectedResult",
-                        "expectedResult": {
-                            "text": s["expectedResult"],
-                            "fileReferences": [],
-                        },
-                    })
-                basic_steps.append({
-                    "type": "step",
-                    "step": {
-                        "number": i,
-                        "text": s.get("text", ""),
-                        "stepRows": step_rows,
-                    },
-                })
-            body["steps"] = {
-                "stepsData": {
-                    "type": "basic",
-                    "modifiedToCorrectSyntax": False,
-                    "basic": basic_steps,
-                    "detailed": [],
-                }
-            }
-        except json.JSONDecodeError:
-            return "Error: steps_json must be a valid JSON string."
+        steps_payload = _build_steps_payload(steps_json)
+        if isinstance(steps_payload, str):
+            return steps_payload  # Error message
 
     wrapped_body = {"testCases": [body]}
     result = _request(f"{proj}/testCases", token, wrapped_body, "POST")
@@ -863,6 +884,9 @@ def create_test_case(
         created = data.get("testCases", []) if isinstance(data, dict) else []
         if created:
             tc = created[0]
+            # Even with warnings, try to add steps if test case was created
+            if steps_payload and tc.get("id"):
+                _put_steps(project_name, token, tc["id"], steps_payload)
             return json.dumps({
                 "message": "Test case created with warnings",
                 "test_case": {"id": tc.get("id"), "tag": tc.get("tag", ""), "summary": summary},
@@ -872,13 +896,199 @@ def create_test_case(
 
     created_list = data.get("testCases", []) if isinstance(data, dict) else []
     created = created_list[0] if created_list else data
+    tc_id = created.get("id") if created else None
+    tc_tag = created.get("tag", "") if created else ""
+
+    # Add steps via PUT to the /steps sub-resource (API ignores steps in POST body)
+    steps_msg = ""
+    if steps_payload and tc_id:
+        err = _put_steps(project_name, token, tc_id, steps_payload)
+        if err:
+            steps_msg = f" (Warning: test case created but steps failed: {err})"
+        else:
+            steps_msg = f" with {len(steps_payload['stepsData']['detailed'])} steps"
+
     return json.dumps({
-        "message": "Test case created successfully",
+        "message": f"Test case created successfully{steps_msg}",
         "test_case": {
-            "id": created.get("id") if created else None,
-            "tag": created.get("tag", "") if created else "",
+            "id": tc_id,
+            "tag": tc_tag,
             "summary": summary,
         },
+    }, indent=2)
+
+
+@mcp.tool()
+def get_test_case(
+    project_name: str,
+    test_case_identifier: str,
+) -> str:
+    """Get a single test case by tag (e.g. 'TC-382') or internal ID, including steps.
+
+    Args:
+        project_name: Name of the Helix ALM project.
+        test_case_identifier: The test case tag (e.g. 'TC-382') or numeric ID.
+    """
+    token = _get_token(project_name)
+    if not token:
+        return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
+
+    tc_id = _resolve_test_case_id(project_name, token, test_case_identifier)
+    if tc_id is None:
+        return f"Error: Could not find test case '{test_case_identifier}'."
+
+    proj = _encode_project(project_name)
+    result = _request(f"{proj}/testCases/{tc_id}", token)
+    if result.get("error"):
+        return f"Error retrieving test case: {json.dumps(result, indent=2)}"
+
+    tc = result["data"]
+    fields = tc.get("fields", [])
+
+    summary = {
+        "id": tc.get("id"),
+        "tag": tc.get("tag", ""),
+    }
+    for label in ["Summary", "Description", "Type", "Status",
+                  "Currently Assigned To", "Priority"]:
+        val = _get_field(fields, label)
+        if val is not None:
+            summary[label.lower().replace(" ", "_")] = val
+
+    # Include all fields for completeness
+    all_fields = {}
+    for f in fields:
+        label = f.get("label", "")
+        val = _get_field(fields, label)
+        if val is not None:
+            all_fields[label] = val
+    summary["all_fields"] = all_fields
+
+    # Fetch steps from the sub-resource
+    steps_result = _request(f"{proj}/testCases/{tc_id}/steps", token)
+    if not steps_result.get("error") and steps_result.get("data"):
+        steps_data = steps_result["data"].get("stepsData", {})
+        detailed = steps_data.get("detailed", [])
+        basic = steps_data.get("basic", [])
+        step_list = detailed if detailed else basic
+        formatted_steps = []
+        for s in step_list:
+            step = s.get("step", {})
+            step_info = {
+                "number": step.get("number"),
+                "text": step.get("text", ""),
+            }
+            for row in step.get("stepRows", []):
+                if row.get("type") == "expectedResult":
+                    step_info["expectedResult"] = row["expectedResult"].get("text", "")
+            formatted_steps.append(step_info)
+        summary["steps"] = formatted_steps
+        summary["step_count"] = len(formatted_steps)
+    else:
+        summary["steps"] = []
+        summary["step_count"] = 0
+
+    # Include links info
+    links_data = tc.get("links", {}).get("linksData", [])
+    if links_data:
+        summary["linked_items"] = []
+        for link in links_data:
+            link_info = {"link_type": link.get("linkDefinition", {}).get("name", "")}
+            if link.get("type") == "parentChildren":
+                pc = link.get("parentChildren", {})
+                parent = pc.get("parent", {})
+                children = pc.get("children", [])
+                if parent:
+                    link_info["parent"] = {"itemType": parent.get("itemType"), "itemID": parent.get("itemID")}
+                if children:
+                    link_info["children"] = [{"itemType": c.get("itemType"), "itemID": c.get("itemID")} for c in children]
+            summary["linked_items"].append(link_info)
+
+    return json.dumps(summary, indent=2)
+
+
+@mcp.tool()
+def update_test_case(
+    project_name: str,
+    test_case_identifier: str,
+    summary: str = "",
+    description: str = "",
+    test_case_type: str = "",
+    steps_json: str = "",
+    additional_fields: str = "",
+) -> str:
+    """Update an existing test case in Helix ALM, including its steps.
+
+    Args:
+        project_name: Name of the Helix ALM project.
+        test_case_identifier: The test case tag (e.g. 'TC-382') or numeric ID.
+        summary: New summary (leave empty to keep current).
+        description: New description (leave empty to keep current).
+        test_case_type: New Type field value (leave empty to keep current).
+        steps_json: Optional JSON array of test steps to replace existing steps.
+                    Each step needs 'text' and optionally 'expectedResult'.
+                    Example: '[{"text": "Open login page", "expectedResult": "Login page displayed"}]'
+        additional_fields: JSON string of extra fields to update, e.g. '{"Category": "Security"}'.
+    """
+    token = _get_token(project_name)
+    if not token:
+        return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
+
+    tc_id = _resolve_test_case_id(project_name, token, test_case_identifier)
+    if tc_id is None:
+        return f"Error: Could not find test case '{test_case_identifier}'."
+
+    proj = _encode_project(project_name)
+
+    # Build fields update body
+    fields_to_update = []
+    if summary:
+        fields_to_update.append({"label": "Summary", "type": "string", "string": summary})
+    if description:
+        fields_to_update.append({
+            "label": "Description",
+            "type": "formattedString",
+            "formattedString": {"isFormatted": False, "text": description},
+        })
+    if test_case_type:
+        fields_to_update.append({"label": "Type", "type": "menuItem", "menuItem": {"label": test_case_type}})
+
+    if additional_fields:
+        try:
+            extras = json.loads(additional_fields)
+            for label, value in extras.items():
+                fields_to_update.append({"label": label, "type": "string", "string": value})
+        except json.JSONDecodeError:
+            return "Error: additional_fields must be a valid JSON string."
+
+    messages = []
+
+    # Update fields via PUT if any fields changed
+    if fields_to_update:
+        body = {"id": tc_id, "fields": fields_to_update}
+        wrapped = {"testCases": [body]}
+        result = _request(f"{proj}/testCases", token, wrapped, "PUT")
+        if result.get("error"):
+            return f"Error updating test case fields: {json.dumps(result, indent=2)}"
+        messages.append("fields updated")
+
+    # Update steps via PUT to /steps sub-resource
+    if steps_json:
+        steps_payload = _build_steps_payload(steps_json)
+        if isinstance(steps_payload, str):
+            return steps_payload  # Error message
+        err = _put_steps(project_name, token, tc_id, steps_payload)
+        if err:
+            return err
+        step_count = len(steps_payload["stepsData"]["detailed"])
+        messages.append(f"{step_count} steps updated")
+
+    if not messages:
+        return "No changes specified. Provide at least one field or steps_json to update."
+
+    return json.dumps({
+        "message": f"Test case {test_case_identifier} updated successfully ({', '.join(messages)})",
+        "test_case_id": tc_id,
     }, indent=2)
 
 
