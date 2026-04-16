@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__helix-alm__configure_helix_alm",
+      "mcp__helix-alm__list_documents",
+      "mcp__helix-alm__get_document_tree",
+      "mcp__helix-alm__get_document_requirements",
+      "mcp__helix-alm__get_requirement",
+      "mcp__helix-alm__get_requirement_types",
+      "mcp__helix-alm__update_requirement",
+      "mcp__helix-alm__create_requirement",
+      "mcp__helix-alm__add_to_document_tree",
+      "mcp__helix-alm__create_test_case",
+      "mcp__helix-alm__link_test_case_to_requirement",
+      "Bash(python3 \"C:\\\\Users\\\\gkruger\\\\Documents\\\\helix-alm-mcp\\\\add_steps_batch2.py\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(r''C:\\\\Users\\\\gkruger\\\\Documents\\\\helix-alm-mcp\\\\helix_alm_mcp.py'', doraise=True\\); print\\(''Syntax OK''\\)\")",
+      "Bash(tasklist /FI 'IMAGENAME eq python*' /V)",
+      "Bash(findstr -i \"helix_alm_mcp\\\\|helix-alm-mcp\")",
+      "Bash(findstr -i \"helix\")",
+      "mcp__helix-alm__create_document",
+      "mcp__helix-alm__add_to_document_tree_top_level",
+      "mcp__helix-alm__get_connection_status",
+      "mcp__helix-alm__list_projects"
+    ]
+  }
+}

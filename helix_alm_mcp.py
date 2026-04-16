@@ -28,6 +28,7 @@ _session = {
     "helix_alm_api_key": os.environ.get("HELIX_ALM_API_KEY", ""),
     "helix_alm_api_secret": os.environ.get("HELIX_ALM_API_SECRET", ""),
     "helix_alm_ssl_verify": os.environ.get("HELIX_ALM_SSL_VERIFY", "false").lower() == "true",
+    "default_project": os.environ.get("HELIX_ALM_DEFAULT_PROJECT", ""),
     "azdo_org": os.environ.get("AZDO_ORG", ""),
     "azdo_project": os.environ.get("AZDO_PROJECT", ""),
     "azdo_pat": os.environ.get("AZDO_PAT", ""),
@@ -57,15 +58,113 @@ def _get_helix_url() -> str:
     return url
 
 
+def _resolve_project(project_name: str) -> str:
+    """Return the given project name, or fall back to the session default."""
+    return project_name or _session.get("default_project", "")
+
+
+def _no_project_msg() -> str:
+    return (
+        "No project specified and no default project is set. "
+        "Either pass a project_name or call set_default_project first."
+    )
+
+
+def _friendly_error(result: dict, action: str = "complete this action") -> str:
+    """Translate an API error result into a human-readable message.
+
+    Leads with plain English, then includes the server detail if available.
+    """
+    status = result.get("status", 0)
+    data = result.get("data")
+
+    # Extract the most useful detail from the response body
+    detail = ""
+    if isinstance(data, dict):
+        detail = data.get("message", "") or data.get("error", "")
+        if not detail and data.get("errors"):
+            errors = data["errors"]
+            if isinstance(errors, list):
+                detail = "; ".join(
+                    e.get("message", str(e)) if isinstance(e, dict) else str(e)
+                    for e in errors[:3]
+                )
+        if not detail:
+            detail = data.get("raw", "")
+    if not detail:
+        detail = result.get("message", "")
+
+    # Map common HTTP status codes to friendly messages
+    if status == 0:
+        msg = f"Could not {action}: unable to reach the server. Check the URL and your network connection."
+    elif status == 401:
+        msg = f"Could not {action}: your credentials were rejected. Check your API key/token or username/password."
+    elif status == 403:
+        msg = f"Could not {action}: you don't have permission. Check your user role in the project."
+    elif status == 404:
+        msg = f"Could not {action}: the item was not found. Check that the name, tag, or ID is correct."
+    elif status == 409:
+        msg = f"Could not {action}: there was a conflict — the item may have been modified by someone else."
+    elif status == 422:
+        msg = f"Could not {action}: the server rejected the data. A required field may be missing or a value may be invalid."
+    elif 400 <= status < 500:
+        msg = f"Could not {action}: the request was invalid (status {status})."
+    elif 500 <= status < 600:
+        msg = f"Could not {action}: the server encountered an internal error (status {status}). Try again or contact your administrator."
+    else:
+        msg = f"Could not {action} (status {status})."
+
+    if detail:
+        # Truncate very long details but keep enough to be useful
+        if len(detail) > 300:
+            detail = detail[:300] + "..."
+        msg += f" Detail: {detail}"
+
+    return msg
+
+
 mcp = FastMCP(
     "Helix ALM Requirements",
-    instructions="MCP server for managing requirements, documents, and automation suites in Helix ALM, "
-    "with Azure DevOps integration. IMPORTANT: Before using any Helix ALM tools, users must first "
-    "call configure_helix_alm with their server URL and API token. The user only needs to provide "
-    "the server base URL (e.g. 'https://server:8443/') and their API token. For Azure DevOps "
-    "integration, call configure_azure_devops with org, project, and PAT. Credentials are stored "
-    "in memory only for the session and are never written to disk. If a tool returns a "
-    "'not configured' error, prompt the user to call the appropriate configure tool.",
+    instructions=(
+        "MCP server for managing requirements, test cases, documents, and automation suites "
+        "in Perforce ALM (formerly Helix ALM), with Azure DevOps integration.\n\n"
+        "SETUP: Before using any tools, call configure_helix_alm with the server URL and "
+        "API token. The user only needs the base URL (e.g. 'https://server:8443/') and their "
+        "API token. For Azure DevOps, call configure_azure_devops with org, project, and PAT. "
+        "Credentials are stored in memory only. If a tool returns 'not configured', prompt the "
+        "user to call the appropriate configure tool.\n\n"
+        "TIP: Use set_default_project so users don't have to specify a project on every call. "
+        "If the server has only one project, it is auto-selected during configure_helix_alm.\n\n"
+        "INTENT MAPPING — when the user says:\n"
+        "- 'show/list my requirements' → list_requirements\n"
+        "- 'find requirements about X' → search_requirements\n"
+        "- 'show me requirement BR-123' → get_requirement\n"
+        "- 'create a requirement' → create_requirement\n"
+        "- 'update/change requirement BR-123' → update_requirement\n"
+        "- 'approve/reject/comment on a requirement' → add_requirement_event\n"
+        "- 'what can I do with this requirement' → get_requirement_workflow_events\n"
+        "- 'what types of requirements are there' → get_requirement_types\n"
+        "- 'what priority/status/category values can I use' → get_field_values\n"
+        "- 'show/list my test cases' → list_test_cases\n"
+        "- 'find test cases about X' → search_test_cases\n"
+        "- 'show me test case TC-42' or 'show the steps' → get_test_case\n"
+        "- 'create a test case with steps' → create_test_case\n"
+        "- 'update test case / replace the steps' → update_test_case (note: replaces ALL steps)\n"
+        "- 'add a step to test case' → add_test_case_steps (appends without removing existing steps)\n"
+        "- 'what types of test cases are there' → get_test_case_types\n"
+        "- 'link test case to requirement' → link_test_case_to_requirement\n"
+        "- 'show my documents' → list_documents\n"
+        "- 'show the document outline/tree' → get_document_tree\n"
+        "- 'add requirements to a document' → add_to_document_tree or add_to_document_tree_top_level\n"
+        "- 'show my automation suites' → list_automation_suites\n"
+        "- 'submit test results' → submit_automation_results_simple (for quick pass/fail lists), "
+        "submit_automation_build (full JSON), or submit_test_results_xml (from XML files)\n"
+        "- 'import results from CI/CD' or 'from Azure DevOps' → azdo_submit_to_helix_alm or "
+        "azdo_submit_latest_to_helix_alm\n"
+        "- 'check connection' → get_connection_status\n\n"
+        "Suites can be referenced by name (e.g. 'Regression Suite') or numeric ID. "
+        "Requirements and test cases can be referenced by tag (e.g. 'BR-1960', 'TC-42') or numeric ID."
+    ),
 )
 
 # --- HTTP helpers ---
@@ -183,7 +282,7 @@ def _put_steps(project_name: str, token: str, tc_id: int, steps_payload: dict) -
     proj = _encode_project(project_name)
     result = _request(f"{proj}/testCases/{tc_id}/steps", token, steps_payload, "PUT")
     if result.get("error"):
-        return f"Error adding steps: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "add steps to the test case")
     return None
 
 
@@ -237,10 +336,26 @@ def _format_requirement(req: dict) -> dict:
     return summary
 
 
+def _format_test_case(tc: dict) -> dict:
+    """Format a test case into a readable summary."""
+    fields = tc.get("fields", [])
+    summary = {
+        "id": tc.get("id"),
+        "tag": tc.get("tag", ""),
+    }
+    for label in ["Summary", "Description", "Priority", "Status",
+                  "Currently Assigned To", "Type"]:
+        val = _get_field(fields, label)
+        if val is not None:
+            summary[label.lower().replace(" ", "_")] = val
+    return summary
+
+
 def _resolve_requirement_id(project_name: str, token: str, identifier: str) -> int | None:
     """Resolve a requirement tag (e.g. 'BR-1960') or numeric ID to the internal API id.
 
     Users typically reference requirements by tag, but the API uses internal IDs.
+    Optimized to minimize payload by requesting only the Tag column.
     """
     # If it's purely numeric, try it as a direct ID first
     if identifier.isdigit():
@@ -249,9 +364,9 @@ def _resolve_requirement_id(project_name: str, token: str, identifier: str) -> i
         if not result.get("error"):
             return int(identifier)
 
-    # Search by tag in the requirements list
+    # Fetch the list with minimal columns — tag and id are always top-level fields
     proj = _encode_project(project_name)
-    result = _request(f"{proj}/requirements", token)
+    result = _request(f"{proj}/requirements?columns={urllib.parse.quote('Tag')}", token)
     if result.get("error"):
         return None
 
@@ -267,15 +382,19 @@ def _resolve_requirement_id(project_name: str, token: str, identifier: str) -> i
 
 
 def _resolve_test_case_id(project_name: str, token: str, identifier: str) -> int | None:
-    """Resolve a test case tag (e.g. 'TC-42') or numeric ID to the internal API id."""
+    """Resolve a test case tag (e.g. 'TC-42') or numeric ID to the internal API id.
+
+    Optimized to minimize payload by requesting only the Tag column.
+    """
     if identifier.isdigit():
         proj = _encode_project(project_name)
         result = _request(f"{proj}/testCases/{identifier}", token)
         if not result.get("error"):
             return int(identifier)
 
+    # Fetch the list with minimal columns — tag and id are always top-level fields
     proj = _encode_project(project_name)
-    result = _request(f"{proj}/testCases", token)
+    result = _request(f"{proj}/testCases?columns={urllib.parse.quote('Tag')}", token)
     if result.get("error"):
         return None
 
@@ -298,6 +417,7 @@ def configure_helix_alm(
     username: str = "",
     password: str = "",
     ssl_verify: bool = False,
+    default_project: str = "",
 ) -> str:
     """Configure the Helix ALM connection for this session. Credentials are stored
     in memory only and never written to disk.
@@ -312,6 +432,7 @@ def configure_helix_alm(
         username: Username for basic authentication (alternative to api_token).
         password: Password for basic authentication (alternative to api_token).
         ssl_verify: Whether to verify SSL certificates (default False for self-signed certs).
+        default_project: Optional default project name. When set, you can omit project_name from other tools.
     """
     if not url:
         return "Error: url is required."
@@ -330,12 +451,19 @@ def configure_helix_alm(
     if not has_basic and not has_apikey:
         return "Error: Provide either an api_token or username+password."
 
-    # Normalize the URL — append the REST API path if not present
+    # Normalize the URL — strip any partial REST API path, then append the canonical one.
+    # This handles users pasting URLs like:
+    #   https://server:8443/
+    #   https://server:8443/helix-alm/
+    #   https://server:8443/helix-alm/api/
+    #   https://server:8443/helix-alm/api/v0
+    #   https://server:8443/helix-alm/api/v0/
     normalized_url = url.rstrip("/")
-    if not normalized_url.endswith("/helix-alm/api/v0"):
-        normalized_url += "/helix-alm/api/v0/"
-    elif not normalized_url.endswith("/"):
-        normalized_url += "/"
+    for suffix in ["/helix-alm/api/v0", "/helix-alm/api", "/helix-alm"]:
+        if normalized_url.lower().endswith(suffix):
+            normalized_url = normalized_url[:-len(suffix)]
+            break
+    normalized_url += "/helix-alm/api/v0/"
 
     _session["helix_alm_url"] = normalized_url
     _session["helix_alm_user"] = username
@@ -343,6 +471,8 @@ def configure_helix_alm(
     _session["helix_alm_api_key"] = api_key
     _session["helix_alm_api_secret"] = api_secret
     _session["helix_alm_ssl_verify"] = ssl_verify
+    if default_project:
+        _session["default_project"] = default_project
 
     # Verify connectivity
     result = _request("projects")
@@ -355,12 +485,21 @@ def configure_helix_alm(
         }, indent=2)
 
     projects = result["data"].get("projects", [])
-    return json.dumps({
+    project_names = [p["name"] for p in projects]
+
+    # Auto-set default project if there is exactly one project
+    if not _session["default_project"] and len(project_names) == 1:
+        _session["default_project"] = project_names[0]
+
+    response = {
         "status": "connected",
         "url": normalized_url,
         "auth_method": "api_token" if has_apikey else "basic",
-        "available_projects": [p["name"] for p in projects],
-    }, indent=2)
+        "available_projects": project_names,
+    }
+    if _session["default_project"]:
+        response["default_project"] = _session["default_project"]
+    return json.dumps(response, indent=2)
 
 
 @mcp.tool()
@@ -416,6 +555,7 @@ def get_connection_status() -> str:
                 else "none"
             ),
             "ssl_verify": _session["helix_alm_ssl_verify"],
+            "default_project": _session["default_project"] or "(not set)",
         },
         "azure_devops": {
             "configured": _azdo_configured(),
@@ -424,6 +564,36 @@ def get_connection_status() -> str:
         },
     }
     return json.dumps(status, indent=2)
+
+
+@mcp.tool()
+def set_default_project(project_name: str) -> str:
+    """Set the default Helix ALM project for this session. Once set, you can omit
+    project_name from all other tools and they will use this project automatically.
+
+    Args:
+        project_name: Name of the Helix ALM project to use as the default.
+    """
+    if not _helix_configured():
+        return _helix_not_configured_msg()
+
+    # Verify the project exists
+    result = _request("projects")
+    if result.get("error"):
+        return _friendly_error(result, "check available projects")
+
+    project_names = [p["name"] for p in result["data"].get("projects", [])]
+    if project_name not in project_names:
+        return json.dumps({
+            "error": f"Project '{project_name}' not found.",
+            "available_projects": project_names,
+        }, indent=2)
+
+    _session["default_project"] = project_name
+    return json.dumps({
+        "message": f"Default project set to '{project_name}'",
+        "default_project": project_name,
+    }, indent=2)
 
 
 # --- MCP Tools ---
@@ -435,21 +605,24 @@ def list_projects() -> str:
         return _helix_not_configured_msg()
     result = _request("projects")
     if result.get("error"):
-        return f"Error listing projects: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "list projects")
     projects = result["data"].get("projects", [])
     names = [p["name"] for p in projects]
     return json.dumps({"projects": names}, indent=2)
 
 
 @mcp.tool()
-def list_requirements(project_name: str, columns: str = "", filter_name: str = "") -> str:
+def list_requirements(project_name: str = "", columns: str = "", filter_name: str = "") -> str:
     """List requirements in a Helix ALM project.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         columns: Comma-separated field labels to include (e.g. "Summary,Priority"). Leave empty for defaults.
         filter_name: Optional saved filter name to apply.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -464,7 +637,7 @@ def list_requirements(project_name: str, columns: str = "", filter_name: str = "
 
     result = _request(f"{proj}/requirements{qs}", token)
     if result.get("error"):
-        return f"Error listing requirements: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "list requirements")
 
     reqs = result["data"].get("requirements", [])
     formatted = [_format_requirement(r) for r in reqs]
@@ -472,13 +645,16 @@ def list_requirements(project_name: str, columns: str = "", filter_name: str = "
 
 
 @mcp.tool()
-def get_requirement(project_name: str, requirement_identifier: str) -> str:
+def get_requirement(project_name: str = "", requirement_identifier: str = "") -> str:
     """Get a single requirement by tag (e.g. 'BR-1960') or internal ID.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         requirement_identifier: The requirement tag (e.g. 'BR-1960', 'FR-1961') or numeric ID.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -490,7 +666,7 @@ def get_requirement(project_name: str, requirement_identifier: str) -> str:
     proj = _encode_project(project_name)
     result = _request(f"{proj}/requirements/{req_id}", token)
     if result.get("error"):
-        return f"Error getting requirement {requirement_identifier}: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, f"get requirement '{requirement_identifier}'")
 
     req = result["data"]
     summary = _format_requirement(req)
@@ -502,21 +678,26 @@ def get_requirement(project_name: str, requirement_identifier: str) -> str:
 
 
 @mcp.tool()
-def get_requirement_types(project_name: str) -> str:
-    """Get the available requirement types for a project (e.g. Business Requirement, Functional Requirement).
+def get_requirement_types(project_name: str = "") -> str:
+    """Get the requirement types currently in use in a project (e.g. Business Requirement,
+    Functional Requirement). Note: this discovers types from existing requirements, so types
+    that haven't been used yet may not appear.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
 
     proj = _encode_project(project_name)
-    # Get a sample requirement to discover available types from the tag prefixes
-    result = _request(f"{proj}/requirements", token)
+    # Fetch with minimal columns — requirementType is a top-level field, always included
+    result = _request(f"{proj}/requirements?columns={urllib.parse.quote('Tag')}", token)
     if result.get("error"):
-        return f"Error: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "get requirement types")
 
     types_seen = {}
     for req in result["data"].get("requirements", []):
@@ -530,20 +711,100 @@ def get_requirement_types(project_name: str) -> str:
 
 
 @mcp.tool()
-def create_requirement(project_name: str, summary: str, description: str = "",
+def get_field_values(
+    project_name: str = "",
+    item_type: str = "requirements",
+    field_label: str = "",
+) -> str:
+    """Discover the values currently in use for a specific field on requirements or test cases.
+    Useful for finding valid Priority, Status, Category, or other menu field values before
+    creating or updating items.
+
+    Note: this discovers values from existing items, so values that haven't been used yet
+    may not appear.
+
+    Args:
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        item_type: The type of item to scan — 'requirements' or 'testCases'.
+        field_label: The field name to discover values for (e.g. 'Priority', 'Status', 'Category', 'Type').
+    """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
+    if not field_label:
+        return "Error: field_label is required. Examples: 'Priority', 'Status', 'Category', 'Type'."
+    if item_type not in ("requirements", "testCases"):
+        return "Error: item_type must be 'requirements' or 'testCases'."
+
+    token = _get_token(project_name)
+    if not token:
+        return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
+
+    proj = _encode_project(project_name)
+    # Request only the specific field column to minimize payload
+    qs = f"?columns={urllib.parse.quote(field_label)}"
+    result = _request(f"{proj}/{item_type}{qs}", token)
+    if result.get("error"):
+        # If the column request fails, retry without column filter
+        result = _request(f"{proj}/{item_type}", token)
+        if result.get("error"):
+            return _friendly_error(result, f"get field values for '{field_label}'")
+
+    items_key = item_type  # API returns {"requirements": [...]} or {"testCases": [...]}
+    items = result["data"].get(items_key, [])
+
+    values_seen = set()
+    field_found = False
+    for item in items:
+        for f in item.get("fields", []):
+            if f.get("label") == field_label:
+                field_found = True
+                val = _get_field(item["fields"], field_label)
+                if val is not None and val != "":
+                    values_seen.add(val)
+
+    if not field_found:
+        # List available field labels to help the user
+        all_labels = set()
+        for item in items[:5]:  # Sample from first few items
+            for f in item.get("fields", []):
+                if f.get("label"):
+                    all_labels.add(f["label"])
+        return json.dumps({
+            "error": f"Field '{field_label}' not found on any {item_type}.",
+            "available_fields": sorted(all_labels),
+        }, indent=2)
+
+    return json.dumps({
+        "field": field_label,
+        "item_type": item_type,
+        "values": sorted(values_seen),
+        "count": len(values_seen),
+    }, indent=2)
+
+
+@mcp.tool()
+def create_requirement(project_name: str = "", summary: str = "", description: str = "",
                        requirement_type: str = "Functional Requirement",
                        priority: str = "",
                        additional_fields: str = "") -> str:
     """Create a new requirement in a Helix ALM project.
 
+    IMPORTANT: If this requirement will be added to a requirement document,
+    you MUST call create_document_snapshot for that document BEFORE making
+    this change so a point-in-time baseline exists.
+
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         summary: The requirement summary/title.
         description: Detailed description of the requirement.
         requirement_type: Requirement type label (e.g. "Business Requirement", "Functional Requirement", "Non-Functional Requirement"). Use get_requirement_types to see available types.
         priority: Priority level (e.g. "High", "Medium", "Low"). Must match project config.
         additional_fields: JSON string of extra fields to set, e.g. '{"Category": "Security"}'.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -608,7 +869,7 @@ def create_requirement(project_name: str, summary: str, description: str = "",
                 "requirement": _format_requirement(created[0]),
                 "warnings": errors,
             }, indent=2)
-        return f"Error creating requirement: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "create the requirement")
 
     created_list = data.get("requirements", []) if isinstance(data, dict) else []
     created = created_list[0] if created_list else data
@@ -619,19 +880,26 @@ def create_requirement(project_name: str, summary: str, description: str = "",
 
 
 @mcp.tool()
-def update_requirement(project_name: str, requirement_identifier: str,
+def update_requirement(project_name: str = "", requirement_identifier: str = "",
                        summary: str = "", description: str = "",
                        priority: str = "", additional_fields: str = "") -> str:
     """Update an existing requirement in Helix ALM.
 
+    IMPORTANT: If this requirement belongs to a requirement document, you MUST
+    call create_document_snapshot for that document BEFORE making this change
+    so a point-in-time baseline exists.
+
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         requirement_identifier: The requirement tag (e.g. 'BR-1960') or numeric ID.
         summary: New summary (leave empty to keep current).
         description: New description (leave empty to keep current).
         priority: New priority (leave empty to keep current).
         additional_fields: JSON string of extra fields to update, e.g. '{"Category": "Security"}'.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -644,7 +912,7 @@ def update_requirement(project_name: str, requirement_identifier: str,
 
     get_result = _request(f"{proj}/requirements/{req_id}", token)
     if get_result.get("error"):
-        return f"Error getting requirement {requirement_identifier}: {json.dumps(get_result, indent=2)}"
+        return _friendly_error(get_result, f"get requirement '{requirement_identifier}' for updating")
 
     req = get_result["data"]
     fields = req.get("fields", [])
@@ -666,7 +934,7 @@ def update_requirement(project_name: str, requirement_identifier: str,
 
     result = _request(f"{proj}/requirements/{req_id}", token, req, "PUT")
     if result.get("error"):
-        return f"Error updating requirement: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "update the requirement")
 
     updated = result["data"] if result["data"] else req
     return json.dumps({
@@ -676,13 +944,20 @@ def update_requirement(project_name: str, requirement_identifier: str,
 
 
 @mcp.tool()
-def delete_requirement(project_name: str, requirement_identifier: str) -> str:
+def delete_requirement(project_name: str = "", requirement_identifier: str = "") -> str:
     """Delete a requirement from a Helix ALM project.
 
+    IMPORTANT: If this requirement belongs to a requirement document, you MUST
+    call create_document_snapshot for that document BEFORE making this change
+    so a point-in-time baseline exists.
+
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         requirement_identifier: The requirement tag (e.g. 'BR-1960') or numeric ID.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -694,22 +969,29 @@ def delete_requirement(project_name: str, requirement_identifier: str) -> str:
     proj = _encode_project(project_name)
     result = _request(f"{proj}/requirements/{req_id}", token, method="DELETE")
     if result.get("error"):
-        return f"Error deleting requirement {requirement_identifier}: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, f"delete requirement '{requirement_identifier}'")
 
     return json.dumps({"message": f"Requirement {requirement_identifier} deleted successfully"})
 
 
 @mcp.tool()
-def add_requirement_event(project_name: str, requirement_identifier: str,
-                          event_name: str, notes: str = "") -> str:
+def add_requirement_event(project_name: str = "", requirement_identifier: str = "",
+                          event_name: str = "", notes: str = "") -> str:
     """Add a workflow event to a requirement (e.g. Comment, Approve, Reject).
 
+    IMPORTANT: If this requirement belongs to a requirement document, you MUST
+    call create_document_snapshot for that document BEFORE making this change
+    so a point-in-time baseline exists.
+
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         requirement_identifier: The requirement tag (e.g. 'BR-1960') or numeric ID.
         event_name: The workflow event name (e.g. "Comment", "Approve", "Reject").
         notes: Optional notes/comments for the event.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -734,7 +1016,7 @@ def add_requirement_event(project_name: str, requirement_identifier: str,
 
     result = _request(f"{proj}/requirements/{req_id}/events", token, event_data, "POST")
     if result.get("error"):
-        return f"Error adding event: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, f"add event '{event_name}' to the requirement")
 
     return json.dumps({
         "message": f"Event '{event_name}' added to requirement {requirement_identifier}",
@@ -743,13 +1025,16 @@ def add_requirement_event(project_name: str, requirement_identifier: str,
 
 
 @mcp.tool()
-def search_requirements(project_name: str, search_text: str) -> str:
+def search_requirements(project_name: str = "", search_text: str = "") -> str:
     """Search requirements by text across Summary and Description fields.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         search_text: Text to search for in requirements.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -759,7 +1044,7 @@ def search_requirements(project_name: str, search_text: str) -> str:
     qs = f"?searchText={urllib.parse.quote(search_text)}"
     result = _request(f"{proj}/requirements{qs}", token)
     if result.get("error"):
-        return f"Error searching requirements: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "search requirements")
 
     reqs = result["data"].get("requirements", [])
     formatted = [_format_requirement(r) for r in reqs]
@@ -767,13 +1052,16 @@ def search_requirements(project_name: str, search_text: str) -> str:
 
 
 @mcp.tool()
-def get_requirement_workflow_events(project_name: str, requirement_identifier: str) -> str:
+def get_requirement_workflow_events(project_name: str = "", requirement_identifier: str = "") -> str:
     """Get the available workflow events for a requirement.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         requirement_identifier: The requirement tag (e.g. 'BR-1960') or numeric ID.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -785,17 +1073,33 @@ def get_requirement_workflow_events(project_name: str, requirement_identifier: s
     proj = _encode_project(project_name)
     result = _request(f"{proj}/requirements/{req_id}/availableEvents", token)
     if result.get("error"):
-        return f"Error: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "get workflow events for the requirement")
 
-    return json.dumps(result["data"], indent=2)
+    data = result["data"]
+    events_list = data.get("eventsData", data.get("events", []))
+    if isinstance(events_list, list):
+        formatted_events = []
+        for event in events_list:
+            entry = {"name": event.get("name", "")}
+            fields = event.get("fields", [])
+            if fields:
+                entry["fields"] = [f.get("label", "") for f in fields if f.get("label")]
+            formatted_events.append(entry)
+        return json.dumps({
+            "requirement": requirement_identifier,
+            "available_events": formatted_events,
+            "count": len(formatted_events),
+        }, indent=2)
+
+    return json.dumps(data, indent=2)
 
 
 # --- Test Case MCP Tools ---
 
 @mcp.tool()
 def create_test_case(
-    project_name: str,
-    summary: str,
+    project_name: str = "",
+    summary: str = "",
     test_case_type: str = "Validation",
     description: str = "",
     priority: str = "",
@@ -805,7 +1109,7 @@ def create_test_case(
     """Create a new test case in a Helix ALM project.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         summary: The test case summary/title.
         test_case_type: The Type field value (e.g. "Validation", "Functional", "Regression").
                         Must match a menu item configured in the project. Defaults to "Validation".
@@ -815,6 +1119,9 @@ def create_test_case(
                     'expectedResult'. Example: '[{"text": "Open login page", "expectedResult": "Login page displayed"}]'
         additional_fields: JSON string of extra fields to set, e.g. '{"Automated Test": true}'.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -892,7 +1199,7 @@ def create_test_case(
                 "test_case": {"id": tc.get("id"), "tag": tc.get("tag", ""), "summary": summary},
                 "warnings": errors,
             }, indent=2)
-        return f"Error creating test case: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "create the test case")
 
     created_list = data.get("testCases", []) if isinstance(data, dict) else []
     created = created_list[0] if created_list else data
@@ -920,15 +1227,18 @@ def create_test_case(
 
 @mcp.tool()
 def get_test_case(
-    project_name: str,
-    test_case_identifier: str,
+    project_name: str = "",
+    test_case_identifier: str = "",
 ) -> str:
     """Get a single test case by tag (e.g. 'TC-382') or internal ID, including steps.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         test_case_identifier: The test case tag (e.g. 'TC-382') or numeric ID.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -940,7 +1250,7 @@ def get_test_case(
     proj = _encode_project(project_name)
     result = _request(f"{proj}/testCases/{tc_id}", token)
     if result.get("error"):
-        return f"Error retrieving test case: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "retrieve the test case")
 
     tc = result["data"]
     fields = tc.get("fields", [])
@@ -1009,8 +1319,8 @@ def get_test_case(
 
 @mcp.tool()
 def update_test_case(
-    project_name: str,
-    test_case_identifier: str,
+    project_name: str = "",
+    test_case_identifier: str = "",
     summary: str = "",
     description: str = "",
     test_case_type: str = "",
@@ -1019,17 +1329,24 @@ def update_test_case(
 ) -> str:
     """Update an existing test case in Helix ALM, including its steps.
 
+    WARNING: If steps_json is provided, it REPLACES ALL existing steps — it does not
+    append. To add steps without losing existing ones, use add_test_case_steps instead.
+
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         test_case_identifier: The test case tag (e.g. 'TC-382') or numeric ID.
         summary: New summary (leave empty to keep current).
         description: New description (leave empty to keep current).
         test_case_type: New Type field value (leave empty to keep current).
-        steps_json: Optional JSON array of test steps to replace existing steps.
+        steps_json: JSON array of steps that will REPLACE all existing steps.
+                    To add steps without losing existing ones, use add_test_case_steps instead.
                     Each step needs 'text' and optionally 'expectedResult'.
                     Example: '[{"text": "Open login page", "expectedResult": "Login page displayed"}]'
         additional_fields: JSON string of extra fields to update, e.g. '{"Category": "Security"}'.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1069,7 +1386,7 @@ def update_test_case(
         wrapped = {"testCases": [body]}
         result = _request(f"{proj}/testCases", token, wrapped, "PUT")
         if result.get("error"):
-            return f"Error updating test case fields: {json.dumps(result, indent=2)}"
+            return _friendly_error(result, "update test case fields")
         messages.append("fields updated")
 
     # Update steps via PUT to /steps sub-resource
@@ -1093,10 +1410,104 @@ def update_test_case(
 
 
 @mcp.tool()
+def add_test_case_steps(
+    project_name: str = "",
+    test_case_identifier: str = "",
+    steps_json: str = "",
+) -> str:
+    """Add steps to an existing test case WITHOUT removing its current steps.
+    The new steps are appended after the existing ones.
+
+    Use this instead of update_test_case when you want to add steps to a test case
+    that already has steps, without losing the existing ones.
+
+    Args:
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        test_case_identifier: The test case tag (e.g. 'TC-382') or numeric ID.
+        steps_json: JSON array of new steps to append. Each step needs 'text' and optionally
+                    'expectedResult'. Example: '[{"text": "Click Save", "expectedResult": "Record is saved"}]'
+    """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
+    token = _get_token(project_name)
+    if not token:
+        return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
+
+    tc_id = _resolve_test_case_id(project_name, token, test_case_identifier)
+    if tc_id is None:
+        return f"Error: Could not find test case '{test_case_identifier}'."
+
+    if not steps_json:
+        return "Error: steps_json is required. Provide a JSON array of steps to add."
+
+    # Parse the new steps
+    try:
+        new_steps_input = json.loads(steps_json)
+        if not isinstance(new_steps_input, list) or not new_steps_input:
+            return "Error: steps_json must be a non-empty JSON array."
+    except json.JSONDecodeError:
+        return "Error: steps_json must be a valid JSON string."
+
+    proj = _encode_project(project_name)
+
+    # Fetch existing steps
+    existing_detailed = []
+    steps_result = _request(f"{proj}/testCases/{tc_id}/steps", token)
+    if not steps_result.get("error") and steps_result.get("data"):
+        steps_data = steps_result["data"].get("stepsData", {})
+        existing_detailed = steps_data.get("detailed", [])
+
+    # Build new step entries, numbering continues from existing
+    start_number = len(existing_detailed) + 1
+    new_detailed = []
+    for i, s in enumerate(new_steps_input, start=start_number):
+        step_rows = []
+        if s.get("expectedResult"):
+            step_rows.append({
+                "type": "expectedResult",
+                "expectedResult": {
+                    "text": s["expectedResult"],
+                    "fileReferences": [],
+                },
+            })
+        new_detailed.append({
+            "type": "step",
+            "step": {
+                "number": i,
+                "text": s.get("text", ""),
+                "stepRows": step_rows,
+            },
+        })
+
+    # Combine existing + new
+    combined = existing_detailed + new_detailed
+    payload = {
+        "stepsData": {
+            "type": "detailed",
+            "modifiedToCorrectSyntax": False,
+            "basic": [],
+            "detailed": combined,
+        }
+    }
+
+    err = _put_steps(project_name, token, tc_id, payload)
+    if err:
+        return err
+
+    return json.dumps({
+        "message": f"Added {len(new_detailed)} step(s) to test case {test_case_identifier}",
+        "test_case_id": tc_id,
+        "previous_step_count": len(existing_detailed),
+        "new_total_step_count": len(combined),
+    }, indent=2)
+
+
+@mcp.tool()
 def link_test_case_to_requirement(
-    project_name: str,
-    test_case_identifier: str,
-    requirement_identifier: str,
+    project_name: str = "",
+    test_case_identifier: str = "",
+    requirement_identifier: str = "",
     link_type: str = "Requirement Tested By",
 ) -> str:
     """Link a test case to an existing requirement in Helix ALM.
@@ -1105,12 +1516,15 @@ def link_test_case_to_requirement(
     is the child, matching the standard 'Requirement Tested By' traceability link.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         test_case_identifier: The test case tag (e.g. 'TC-42') or numeric ID.
         requirement_identifier: The requirement tag (e.g. 'BR-1960') or numeric ID.
         link_type: The link definition name to use. Defaults to 'Requirement Tested By',
                    the standard traceability link. Use 'Related Items' for a peer link.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1146,7 +1560,7 @@ def link_test_case_to_requirement(
     }
     result = _request(f"{proj}/testCases/{tc_id}/links", token, body, "POST")
     if result.get("error"):
-        return f"Error linking test case to requirement: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "link the test case to the requirement")
 
     return json.dumps({
         "message": f"Test case {test_case_identifier} linked to requirement {requirement_identifier}",
@@ -1156,10 +1570,105 @@ def link_test_case_to_requirement(
     }, indent=2)
 
 
+@mcp.tool()
+def list_test_cases(project_name: str = "", columns: str = "", filter_name: str = "") -> str:
+    """List test cases in a Helix ALM project.
+
+    Args:
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        columns: Comma-separated field labels to include (e.g. "Summary,Priority"). Leave empty for defaults.
+        filter_name: Optional saved filter name to apply.
+    """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
+    token = _get_token(project_name)
+    if not token:
+        return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
+
+    proj = _encode_project(project_name)
+    params = []
+    if columns:
+        params.append(f"columns={urllib.parse.quote(columns)}")
+    if filter_name:
+        params.append(f"filter={urllib.parse.quote(filter_name)}")
+    qs = ("?" + "&".join(params)) if params else ""
+
+    result = _request(f"{proj}/testCases{qs}", token)
+    if result.get("error"):
+        return _friendly_error(result, "list test cases")
+
+    tcs = result["data"].get("testCases", [])
+    formatted = [_format_test_case(tc) for tc in tcs]
+    return json.dumps({"count": len(formatted), "test_cases": formatted}, indent=2)
+
+
+@mcp.tool()
+def search_test_cases(project_name: str = "", search_text: str = "") -> str:
+    """Search test cases by text across Summary and Description fields.
+
+    Args:
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        search_text: Text to search for in test cases.
+    """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
+    token = _get_token(project_name)
+    if not token:
+        return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
+
+    proj = _encode_project(project_name)
+    qs = f"?searchText={urllib.parse.quote(search_text)}"
+    result = _request(f"{proj}/testCases{qs}", token)
+    if result.get("error"):
+        return _friendly_error(result, "search test cases")
+
+    tcs = result["data"].get("testCases", [])
+    formatted = [_format_test_case(tc) for tc in tcs]
+    return json.dumps({"count": len(formatted), "test_cases": formatted}, indent=2)
+
+
+@mcp.tool()
+def get_test_case_types(project_name: str = "") -> str:
+    """Get the test case types currently in use in a project (e.g. Validation, Functional,
+    Regression). Note: this discovers types from existing test cases, so types that haven't
+    been used yet may not appear.
+
+    Args:
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+    """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
+    token = _get_token(project_name)
+    if not token:
+        return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
+
+    proj = _encode_project(project_name)
+    # Request only the Type column to minimize payload
+    result = _request(f"{proj}/testCases?columns={urllib.parse.quote('Type')}", token)
+    if result.get("error"):
+        return _friendly_error(result, "get test case types")
+
+    types_seen = set()
+    for tc in result["data"].get("testCases", []):
+        val = _get_field(tc.get("fields", []), "Type")
+        if val:
+            types_seen.add(val)
+
+    return json.dumps({
+        "test_case_types": sorted(types_seen),
+    }, indent=2)
+
+
 # --- Document Tree helpers ---
 
 def _resolve_document_id(project_name: str, token: str, identifier: str) -> int | None:
-    """Resolve a document tag (e.g. 'RD-91') or numeric ID to the internal API id."""
+    """Resolve a document tag (e.g. 'RD-91') or numeric ID to the internal API id.
+
+    Also supports matching by document name (case-insensitive).
+    """
     proj = _encode_project(project_name)
     result = _request(f"{proj}/documents", token)
     if result.get("error"):
@@ -1176,6 +1685,35 @@ def _resolve_document_id(project_name: str, token: str, identifier: str) -> int 
         tag = doc.get("tag", "")
         if "-" in tag and tag.split("-", 1)[1] == identifier:
             return doc["id"]
+        # Match by document name (case-insensitive)
+        fields = doc.get("fields", [])
+        doc_name = _get_field(fields, "Name") or ""
+        if doc_name and doc_name.lower() == identifier.lower():
+            return doc["id"]
+
+    return None
+
+
+def _resolve_suite_id(project_name: str, token: str, identifier: str) -> int | None:
+    """Resolve an automation suite name or numeric ID to the internal API id.
+
+    Accepts a suite name (e.g. 'Regression Suite') or a numeric ID (e.g. '7').
+    Name matching is case-insensitive.
+    """
+    # If purely numeric, try it as a direct ID
+    if identifier.isdigit():
+        return int(identifier)
+
+    proj = _encode_project(project_name)
+    result = _request(f"{proj}/automationSuites", token)
+    if result.get("error"):
+        return None
+
+    suites_data = result["data"].get("automationSuitesData",
+                                     result["data"].get("automationSuites", []))
+    for suite in suites_data:
+        if suite.get("name", "").lower() == identifier.lower():
+            return suite["id"]
 
     return None
 
@@ -1235,12 +1773,15 @@ def _build_tree_recursive(proj: str, token: str, tree_id: int,
 # --- Document Tree MCP Tools ---
 
 @mcp.tool()
-def list_documents(project_name: str) -> str:
+def list_documents(project_name: str = "") -> str:
     """List all requirement documents in a Helix ALM project.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1248,7 +1789,7 @@ def list_documents(project_name: str) -> str:
     proj = _encode_project(project_name)
     result = _request(f"{proj}/documents", token)
     if result.get("error"):
-        return f"Error listing documents: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "list documents")
 
     docs = []
     for doc in result["data"].get("documents", []):
@@ -1264,13 +1805,16 @@ def list_documents(project_name: str) -> str:
 
 
 @mcp.tool()
-def create_document(project_name: str, name: str) -> str:
+def create_document(project_name: str = "", name: str = "") -> str:
     """Create a new requirement document in a Helix ALM project.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         name: Name for the new requirement document.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1292,7 +1836,7 @@ def create_document(project_name: str, name: str) -> str:
     result = _request(f"{proj}/documents", token, body, "POST")
 
     if result.get("error"):
-        return f"Error creating document: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "create the document")
 
     data = result.get("data", {})
     docs = data.get("documents", [])
@@ -1312,16 +1856,19 @@ def create_document(project_name: str, name: str) -> str:
 
 
 @mcp.tool()
-def get_document_tree(project_name: str, document_identifier: str,
+def get_document_tree(project_name: str = "", document_identifier: str = "",
                       max_depth: int = 3) -> str:
     """Get the hierarchical tree structure of a requirement document, showing all
     sections and requirements organized in their outline order.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         document_identifier: Document tag (e.g. 'RD-91') or numeric ID.
         max_depth: Maximum depth of tree to retrieve (default 3). Use higher values for deeply nested documents.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1349,15 +1896,18 @@ def get_document_tree(project_name: str, document_identifier: str,
 
 
 @mcp.tool()
-def get_document_node_children(project_name: str, document_identifier: str,
-                               node_id: int) -> str:
+def get_document_node_children(project_name: str = "", document_identifier: str = "",
+                               node_id: int = 0) -> str:
     """Get the direct child nodes of a specific node in a document tree.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         document_identifier: Document tag (e.g. 'RD-91') or numeric ID.
         node_id: The node ID to get children for (from get_document_tree results).
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1369,7 +1919,7 @@ def get_document_node_children(project_name: str, document_identifier: str,
     proj = _encode_project(project_name)
     result = _request(f"{proj}/documentTrees/{doc_id}/nodes/{node_id}/childNodes", token)
     if result.get("error"):
-        return f"Error: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "get document node children")
 
     children = []
     for node in result["data"].get("childNodesData", []):
@@ -1392,17 +1942,23 @@ def get_document_node_children(project_name: str, document_identifier: str,
 
 
 @mcp.tool()
-def add_to_document_tree(project_name: str, document_identifier: str,
-                         parent_node_id: int,
-                         requirement_identifiers: str) -> str:
+def add_to_document_tree(project_name: str = "", document_identifier: str = "",
+                         parent_node_id: int = 0,
+                         requirement_identifiers: str = "") -> str:
     """Add one or more requirements as child nodes under a parent node in a document tree.
 
+    IMPORTANT: You MUST call create_document_snapshot for this document BEFORE
+    making this change so a point-in-time baseline exists.
+
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         document_identifier: Document tag (e.g. 'RD-91') or numeric ID.
         parent_node_id: The node ID to add children under (from get_document_tree results).
         requirement_identifiers: Comma-separated requirement tags or IDs to add (e.g. 'FR-2219,NFR-2220,CR-2222').
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1439,7 +1995,7 @@ def add_to_document_tree(project_name: str, document_identifier: str,
     )
 
     if result.get("error") and result["status"] != 206:
-        return f"Error adding to document tree: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "add requirements to the document tree")
 
     data = result.get("data", {})
     added = data.get("childNodesData", [])
@@ -1464,15 +2020,21 @@ def add_to_document_tree(project_name: str, document_identifier: str,
 
 
 @mcp.tool()
-def add_to_document_tree_top_level(project_name: str, document_identifier: str,
-                                   requirement_identifiers: str) -> str:
+def add_to_document_tree_top_level(project_name: str = "", document_identifier: str = "",
+                                   requirement_identifiers: str = "") -> str:
     """Add one or more requirements as top-level nodes in a document tree.
 
+    IMPORTANT: You MUST call create_document_snapshot for this document BEFORE
+    making this change so a point-in-time baseline exists.
+
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         document_identifier: Document tag (e.g. 'RD-91') or numeric ID.
         requirement_identifiers: Comma-separated requirement tags or IDs to add (e.g. 'OV-2246,OV-2247').
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1505,7 +2067,7 @@ def add_to_document_tree_top_level(project_name: str, document_identifier: str,
     result = _request(f"{proj}/documentTrees/{doc_id}/nodes", token, body, "POST")
 
     if result.get("error") and result["status"] != 206:
-        return f"Error adding to document tree: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "add requirements to the document tree")
 
     data = result.get("data", {})
     added = data.get("nodesData", [])
@@ -1530,14 +2092,17 @@ def add_to_document_tree_top_level(project_name: str, document_identifier: str,
 
 
 @mcp.tool()
-def get_document_requirements(project_name: str, document_name: str) -> str:
+def get_document_requirements(project_name: str = "", document_name: str = "") -> str:
     """Get all requirements that belong to a specific requirement document, grouped by type.
     This finds requirements via their 'Document List' field rather than the tree structure.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         document_name: The document name (or partial name) to match in the Document List field.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1545,7 +2110,7 @@ def get_document_requirements(project_name: str, document_name: str) -> str:
     proj = _encode_project(project_name)
     result = _request(f"{proj}/requirements", token)
     if result.get("error"):
-        return f"Error: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "get document requirements")
 
     matched = []
     for req in result["data"].get("requirements", []):
@@ -1578,15 +2143,69 @@ def get_document_requirements(project_name: str, document_name: str) -> str:
     }, indent=2)
 
 
+@mcp.tool()
+def create_document_snapshot(
+    project_name: str = "",
+    document_identifier: str = "",
+    name: str = "",
+    description: str = "",
+) -> str:
+    """Create a snapshot of a requirement document in Helix ALM.
+
+    Use this to capture a point-in-time snapshot of a document before making
+    changes to its requirements. This preserves the current state so it can
+    be referenced or compared later.
+
+    Args:
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        document_identifier: Document tag (e.g. 'RD-91'), numeric ID, or document name.
+        name: Label for the snapshot (e.g. '2026-04-16' or 'Pre-release baseline').
+        description: Optional comment explaining the purpose of the snapshot.
+    """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
+    token = _get_token(project_name)
+    if not token:
+        return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
+
+    doc_id = _resolve_document_id(project_name, token, document_identifier)
+    if doc_id is None:
+        return f"Error: Could not find document '{document_identifier}'."
+
+    if not name:
+        return "Error: A label for the snapshot is required."
+
+    proj = _encode_project(project_name)
+    snapshot_entry = {"label": name}
+    if description:
+        snapshot_entry["comment"] = description
+    body = {"snapshotsData": [snapshot_entry]}
+
+    result = _request(f"{proj}/documents/{doc_id}/snapshots", token, body, "POST")
+    if result.get("error"):
+        return _friendly_error(result, "create document snapshot")
+
+    data = result.get("data", {})
+    return json.dumps({
+        "message": f"Snapshot '{name}' created for document '{document_identifier}'",
+        "document_id": doc_id,
+        "snapshot": data,
+    }, indent=2)
+
+
 # --- Automation Suite MCP Tools ---
 
 @mcp.tool()
-def list_automation_suites(project_name: str) -> str:
+def list_automation_suites(project_name: str = "") -> str:
     """List all automation suites in a Helix ALM project.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1594,7 +2213,7 @@ def list_automation_suites(project_name: str) -> str:
     proj = _encode_project(project_name)
     result = _request(f"{proj}/automationSuites", token)
     if result.get("error"):
-        return f"Error listing automation suites: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "list automation suites")
 
     suites = []
     suites_data = result["data"].get("automationSuitesData", result["data"].get("automationSuites", []))
@@ -1610,15 +2229,18 @@ def list_automation_suites(project_name: str) -> str:
 
 
 @mcp.tool()
-def create_automation_suite(project_name: str, name: str,
+def create_automation_suite(project_name: str = "", name: str = "",
                             description: str = "") -> str:
     """Create a new automation suite in a Helix ALM project.
 
     Args:
-        project_name: Name of the Helix ALM project.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
         name: Name of the automation suite.
         description: Optional description.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
@@ -1633,7 +2255,7 @@ def create_automation_suite(project_name: str, name: str,
     }
     result = _request(f"{proj}/automationSuites", token, body, "POST")
     if result.get("error"):
-        return f"Error creating automation suite: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "create the automation suite")
 
     created = result["data"].get("automationSuitesData", [])
     if created:
@@ -1652,31 +2274,51 @@ def create_automation_suite(project_name: str, name: str,
 
 
 @mcp.tool()
-def get_automation_suite(project_name: str, suite_id: int) -> str:
+def get_automation_suite(project_name: str = "", suite_identifier: str = "") -> str:
     """Get details of a specific automation suite.
 
     Args:
-        project_name: Name of the Helix ALM project.
-        suite_id: The numeric ID of the automation suite.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        suite_identifier: The automation suite name (e.g. 'Regression Suite') or numeric ID.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
 
+    suite_id = _resolve_suite_id(project_name, token, suite_identifier)
+    if suite_id is None:
+        return f"Could not find automation suite '{suite_identifier}'. Use list_automation_suites to see available suites."
+
     proj = _encode_project(project_name)
     result = _request(f"{proj}/automationSuites/{suite_id}", token)
     if result.get("error"):
-        return f"Error getting automation suite {suite_id}: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, f"get automation suite '{suite_identifier}'")
 
-    return json.dumps(result["data"], indent=2)
+    data = result["data"]
+    suite = {
+        "id": data.get("id"),
+        "name": data.get("name", ""),
+        "description": data.get("description", ""),
+        "active": data.get("active"),
+    }
+    # Include test count if available
+    if "testCount" in data:
+        suite["test_count"] = data["testCount"]
+    if "lastBuildNumber" in data:
+        suite["last_build_number"] = data["lastBuildNumber"]
+
+    return json.dumps({"automation_suite": suite}, indent=2)
 
 
 @mcp.tool()
 def submit_automation_build(
-    project_name: str,
-    suite_id: int,
-    build_number: str,
-    results_json: str,
+    project_name: str = "",
+    suite_identifier: str = "",
+    build_number: str = "",
+    results_json: str = "",
     description: str = "",
     branch: str = "",
     start_date: str = "",
@@ -1688,8 +2330,8 @@ def submit_automation_build(
     """Submit automated test results to a Helix ALM automation suite.
 
     Args:
-        project_name: Name of the Helix ALM project.
-        suite_id: The numeric ID of the automation suite.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        suite_identifier: The automation suite name (e.g. 'Regression Suite') or numeric ID.
         build_number: Build number/identifier (e.g. '167', 'v2.1.0-rc1').
         results_json: JSON array of test results. Each result must have 'name' and 'status' (with 'label' being 'passed', 'failed', 'skipped', etc.). Example: '[{"name": "test_login", "uniqueName": "com.example.tests.test_login", "status": {"label": "passed"}, "duration": 1500}]'
         description: Optional build description.
@@ -1700,9 +2342,16 @@ def submit_automation_build(
         external_url: Optional URL to external CI system (e.g. Jenkins build URL).
         properties_json: Optional JSON array of name/value property pairs, e.g. '[{"name": "os", "value": "linux"}]'.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
+
+    suite_id = _resolve_suite_id(project_name, token, suite_identifier)
+    if suite_id is None:
+        return f"Could not find automation suite '{suite_identifier}'. Use list_automation_suites to see available suites."
 
     # Parse the results JSON
     try:
@@ -1749,19 +2398,19 @@ def submit_automation_build(
     result = _request(f"{proj}/automationSuites/{suite_id}/submitBuild", token, body, "POST")
 
     if result.get("error"):
-        return f"Error submitting build: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "submit the build results")
 
     return json.dumps({
-        "message": f"Build {build_number} submitted to automation suite {suite_id}",
+        "message": f"Build {build_number} submitted to automation suite '{suite_identifier}'",
         "data": result.get("data"),
     }, indent=2)
 
 
 @mcp.tool()
 def submit_automation_results_simple(
-    project_name: str,
-    suite_id: int,
-    build_number: str,
+    project_name: str = "",
+    suite_identifier: str = "",
+    build_number: str = "",
     test_names_passed: str = "",
     test_names_failed: str = "",
     test_names_skipped: str = "",
@@ -1773,8 +2422,8 @@ def submit_automation_results_simple(
     This is a simplified alternative to submit_automation_build for quick submissions.
 
     Args:
-        project_name: Name of the Helix ALM project.
-        suite_id: The numeric ID of the automation suite.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        suite_identifier: The automation suite name (e.g. 'Regression Suite') or numeric ID.
         build_number: Build number/identifier (e.g. '167').
         test_names_passed: Comma-separated names of tests that passed.
         test_names_failed: Comma-separated names of tests that failed.
@@ -1796,7 +2445,7 @@ def submit_automation_results_simple(
 
     return submit_automation_build(
         project_name=project_name,
-        suite_id=suite_id,
+        suite_identifier=suite_identifier,
         build_number=build_number,
         results_json=json.dumps(results),
         description=description,
@@ -1806,23 +2455,56 @@ def submit_automation_results_simple(
 
 
 @mcp.tool()
-def list_automation_builds(project_name: str, suite_id: int) -> str:
+def list_automation_builds(project_name: str = "", suite_identifier: str = "") -> str:
     """List builds that have been submitted to an automation suite.
 
     Args:
-        project_name: Name of the Helix ALM project.
-        suite_id: The numeric ID of the automation suite.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        suite_identifier: The automation suite name (e.g. 'Regression Suite') or numeric ID.
     """
+    project_name = _resolve_project(project_name)
+    if not project_name:
+        return _no_project_msg()
     token = _get_token(project_name)
     if not token:
         return _helix_not_configured_msg() if not _helix_configured() else f"Error: Could not get access token for project '{project_name}'."
 
+    suite_id = _resolve_suite_id(project_name, token, suite_identifier)
+    if suite_id is None:
+        return f"Could not find automation suite '{suite_identifier}'. Use list_automation_suites to see available suites."
+
     proj = _encode_project(project_name)
     result = _request(f"{proj}/automationSuites/{suite_id}/builds", token)
     if result.get("error"):
-        return f"Error listing builds: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "list automation builds")
 
-    return json.dumps(result["data"], indent=2)
+    data = result["data"]
+    builds_list = data.get("buildsData", data.get("builds", []))
+    if isinstance(builds_list, list):
+        formatted_builds = []
+        for build in builds_list:
+            entry = {
+                "id": build.get("id"),
+                "number": build.get("number", ""),
+                "description": build.get("description", ""),
+                "branch": build.get("branch", ""),
+                "start_date": build.get("startDate", ""),
+            }
+            # Include result summary if available
+            if "resultSummary" in build:
+                entry["result_summary"] = build["resultSummary"]
+            elif "results" in build:
+                results = build["results"]
+                if isinstance(results, list):
+                    entry["result_count"] = len(results)
+            formatted_builds.append(entry)
+        return json.dumps({
+            "suite": suite_identifier,
+            "count": len(formatted_builds),
+            "builds": formatted_builds,
+        }, indent=2)
+
+    return json.dumps(data, indent=2)
 
 
 # --- JUnit / xUnit XML Parsing ---
@@ -2011,10 +2693,10 @@ def _detect_and_parse_xml(xml_content: str) -> dict:
 
 @mcp.tool()
 def submit_junit_results(
-    project_name: str,
-    suite_id: int,
-    build_number: str,
-    file_path: str,
+    project_name: str = "",
+    suite_identifier: str = "",
+    build_number: str = "",
+    file_path: str = "",
     branch: str = "",
     external_url: str = "",
     test_run_set: str = "",
@@ -2022,8 +2704,8 @@ def submit_junit_results(
     """Submit test results from a JUnit XML file to a Helix ALM automation suite.
 
     Args:
-        project_name: Name of the Helix ALM project.
-        suite_id: The numeric ID of the automation suite.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        suite_identifier: The automation suite name (e.g. 'Regression Suite') or numeric ID.
         build_number: Build number/identifier (e.g. '167').
         file_path: Absolute path to the JUnit XML results file.
         branch: Optional branch name (e.g. 'main').
@@ -2045,7 +2727,7 @@ def submit_junit_results(
 
     result = submit_automation_build(
         project_name=project_name,
-        suite_id=suite_id,
+        suite_identifier=suite_identifier,
         build_number=build_number,
         results_json=json.dumps(parsed["results"]),
         description=parsed["description"],
@@ -2066,10 +2748,10 @@ def submit_junit_results(
 
 @mcp.tool()
 def submit_xunit_results(
-    project_name: str,
-    suite_id: int,
-    build_number: str,
-    file_path: str,
+    project_name: str = "",
+    suite_identifier: str = "",
+    build_number: str = "",
+    file_path: str = "",
     branch: str = "",
     external_url: str = "",
     test_run_set: str = "",
@@ -2077,8 +2759,8 @@ def submit_xunit_results(
     """Submit test results from an xUnit v2 XML file to a Helix ALM automation suite.
 
     Args:
-        project_name: Name of the Helix ALM project.
-        suite_id: The numeric ID of the automation suite.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        suite_identifier: The automation suite name (e.g. 'Regression Suite') or numeric ID.
         build_number: Build number/identifier (e.g. '167').
         file_path: Absolute path to the xUnit XML results file.
         branch: Optional branch name (e.g. 'main').
@@ -2100,7 +2782,7 @@ def submit_xunit_results(
 
     result = submit_automation_build(
         project_name=project_name,
-        suite_id=suite_id,
+        suite_identifier=suite_identifier,
         build_number=build_number,
         results_json=json.dumps(parsed["results"]),
         description=parsed["description"],
@@ -2120,10 +2802,10 @@ def submit_xunit_results(
 
 @mcp.tool()
 def submit_test_results_xml(
-    project_name: str,
-    suite_id: int,
-    build_number: str,
-    file_path: str,
+    project_name: str = "",
+    suite_identifier: str = "",
+    build_number: str = "",
+    file_path: str = "",
     branch: str = "",
     external_url: str = "",
     test_run_set: str = "",
@@ -2131,8 +2813,8 @@ def submit_test_results_xml(
     """Submit test results from a JUnit or xUnit XML file, auto-detecting the format.
 
     Args:
-        project_name: Name of the Helix ALM project.
-        suite_id: The numeric ID of the automation suite.
+        project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        suite_identifier: The automation suite name (e.g. 'Regression Suite') or numeric ID.
         build_number: Build number/identifier (e.g. '167').
         file_path: Absolute path to the XML results file (JUnit or xUnit format).
         branch: Optional branch name (e.g. 'main').
@@ -2154,7 +2836,7 @@ def submit_test_results_xml(
 
     result = submit_automation_build(
         project_name=project_name,
-        suite_id=suite_id,
+        suite_identifier=suite_identifier,
         build_number=build_number,
         results_json=json.dumps(parsed["results"]),
         description=parsed["description"],
@@ -2286,7 +2968,7 @@ def azdo_list_pipelines(azdo_org: str = "", azdo_project: str = "",
     base = _azdo_base_url(azdo_org, azdo_project)
     result = _azdo_request(f"{base}/_apis/build/definitions?api-version=7.1", azdo_org, azdo_pat)
     if result.get("error"):
-        return f"Error: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "list Azure DevOps pipelines")
 
     pipelines = []
     for d in result["data"].get("value", []):
@@ -2320,7 +3002,7 @@ def azdo_list_builds(azdo_org: str = "", azdo_project: str = "",
         params += f"&definitions={pipeline_id}"
     result = _azdo_request(f"{base}/_apis/build/builds?{params}", azdo_org, azdo_pat)
     if result.get("error"):
-        return f"Error: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "list Azure DevOps builds")
 
     builds = []
     for b in result["data"].get("value", []):
@@ -2360,7 +3042,7 @@ def azdo_get_test_results(build_id: int, azdo_org: str = "",
         f"{base}/_apis/test/runs?buildIds={build_id}&api-version=7.1", azdo_org, pat
     )
     if runs_result.get("error"):
-        return f"Error fetching test runs: {json.dumps(runs_result, indent=2)}"
+        return _friendly_error(runs_result, "fetch test runs from Azure DevOps")
 
     runs = runs_result["data"].get("value", [])
     if not runs:
@@ -2418,9 +3100,9 @@ def azdo_get_test_results(build_id: int, azdo_org: str = "",
 
 @mcp.tool()
 def azdo_submit_to_helix_alm(
-    build_id: int,
-    helix_project_name: str,
-    helix_suite_id: int,
+    build_id: int = 0,
+    helix_project_name: str = "",
+    helix_suite_identifier: str = "",
     azdo_org: str = "",
     azdo_project: str = "",
     azdo_pat: str = "",
@@ -2434,14 +3116,17 @@ def azdo_submit_to_helix_alm(
 
     Args:
         build_id: The Azure DevOps build ID to fetch results from.
-        helix_project_name: Name of the Helix ALM project.
-        helix_suite_id: The Helix ALM automation suite ID to submit results to.
+        helix_project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        helix_suite_identifier: The Helix ALM automation suite name (e.g. 'Regression Suite') or numeric ID.
         azdo_org: Azure DevOps organization name. Uses session config if empty.
         azdo_project: Azure DevOps project name. Uses session config if empty.
         azdo_pat: Personal access token. Uses session config if empty.
         build_number_override: Override the build number (defaults to Azure DevOps buildNumber).
         branch_override: Override the branch name (defaults to Azure DevOps sourceBranch).
     """
+    helix_project_name = _resolve_project(helix_project_name)
+    if not helix_project_name:
+        return _no_project_msg()
     if not azdo_org and not azdo_pat and not _azdo_configured():
         return _azdo_not_configured_msg()
     if not _helix_configured():
@@ -2454,7 +3139,7 @@ def azdo_submit_to_helix_alm(
         f"{base}/_apis/build/builds/{build_id}?api-version=7.1", azdo_org, pat
     )
     if build_result.get("error"):
-        return f"Error fetching build info: {json.dumps(build_result, indent=2)}"
+        return _friendly_error(build_result, "fetch build info from Azure DevOps")
 
     build_data = build_result["data"]
     build_number = build_number_override or build_data.get("buildNumber", str(build_id))
@@ -2503,7 +3188,7 @@ def azdo_submit_to_helix_alm(
     # Submit to Helix ALM
     submit_result = submit_automation_build(
         project_name=helix_project_name,
-        suite_id=helix_suite_id,
+        suite_identifier=helix_suite_identifier,
         build_number=build_number,
         results_json=json.dumps(helix_results),
         description=description,
@@ -2530,8 +3215,8 @@ def azdo_submit_to_helix_alm(
 
 @mcp.tool()
 def azdo_submit_latest_to_helix_alm(
-    helix_project_name: str,
-    helix_suite_id: int,
+    helix_project_name: str = "",
+    helix_suite_identifier: str = "",
     pipeline_id: int = 0,
     azdo_org: str = "",
     azdo_project: str = "",
@@ -2541,13 +3226,16 @@ def azdo_submit_latest_to_helix_alm(
     them to a Helix ALM automation suite. Optionally filter by pipeline.
 
     Args:
-        helix_project_name: Name of the Helix ALM project.
-        helix_suite_id: The Helix ALM automation suite ID to submit results to.
+        helix_project_name: Name of the Helix ALM project. Uses the default project if not specified.
+        helix_suite_identifier: The Helix ALM automation suite name (e.g. 'Regression Suite') or numeric ID.
         pipeline_id: Optional pipeline/definition ID to filter by. 0 means latest from any pipeline.
         azdo_org: Azure DevOps organization name. Uses session config if empty.
         azdo_project: Azure DevOps project name. Uses session config if empty.
         azdo_pat: Personal access token. Uses session config if empty.
     """
+    helix_project_name = _resolve_project(helix_project_name)
+    if not helix_project_name:
+        return _no_project_msg()
     if not azdo_org and not azdo_pat and not _azdo_configured():
         return _azdo_not_configured_msg()
     if not _helix_configured():
@@ -2562,7 +3250,7 @@ def azdo_submit_latest_to_helix_alm(
 
     result = _azdo_request(f"{base}/_apis/build/builds?{params}", azdo_org, pat)
     if result.get("error"):
-        return f"Error fetching builds: {json.dumps(result, indent=2)}"
+        return _friendly_error(result, "fetch builds from Azure DevOps")
 
     builds = result["data"].get("value", [])
     if not builds:
@@ -2574,7 +3262,7 @@ def azdo_submit_latest_to_helix_alm(
     return azdo_submit_to_helix_alm(
         build_id=build_id,
         helix_project_name=helix_project_name,
-        helix_suite_id=helix_suite_id,
+        helix_suite_identifier=helix_suite_identifier,
         azdo_org=azdo_org,
         azdo_project=azdo_project,
         azdo_pat=azdo_pat,

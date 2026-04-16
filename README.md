@@ -9,10 +9,12 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that c
 ## Features
 
 - **Requirements** — list, search, create, update, delete, and trigger workflow events
-- **Test Cases** — create, read, and update test cases with structured steps; link them to requirements
-- **Requirement Documents** — browse document trees, add requirements to sections
-- **Automation Suites** — submit test run results (manually, from JUnit/xUnit XML, or from Azure DevOps builds)
+- **Test Cases** — list, search, create, read, update, and append steps; link to requirements
+- **Requirement Documents** — browse document trees, add requirements to sections, create snapshots
+- **Automation Suites** — submit test run results (manually, from JUnit/xUnit XML, or from Azure DevOps builds); reference suites by name or ID
 - **Azure DevOps** — pull test results from a build and push them straight into a Perforce ALM automation suite
+- **Default project** — set once with `set_default_project` and omit `project_name` from every subsequent call
+- **Field discovery** — look up valid Priority, Status, Category, or Type values before creating items
 - **Session-based auth** — credentials are held in memory only and never written to disk
 
 ---
@@ -94,7 +96,7 @@ Credentials set via environment variables are loaded at startup. You can overrid
 ### Configuration
 
 #### `configure_helix_alm`
-Configure the Perforce ALM (formerly Helix ALM) connection for the current session.
+Configure the Perforce ALM (formerly Helix ALM) connection for the current session. The URL is normalized automatically — you can pass the base URL, or any path under it (e.g. `https://server:8443/helix-alm/api/v0`), and it will resolve correctly. If the server has only one project, it is auto-selected as the default.
 
 | Argument | Description |
 |----------|-------------|
@@ -102,6 +104,7 @@ Configure the Perforce ALM (formerly Helix ALM) connection for the current sessi
 | `api_token` | API token in `key:secret` format *(recommended)* |
 | `username` / `password` | Basic auth alternative |
 | `ssl_verify` | Verify SSL certificates (default `false` for self-signed certs) |
+| `default_project` | Optional default project — omit `project_name` from subsequent calls |
 
 #### `configure_azure_devops`
 Configure the Azure DevOps connection for the current session.
@@ -113,7 +116,25 @@ Configure the Azure DevOps connection for the current session.
 | `pat` | Personal access token |
 
 #### `get_connection_status`
-Returns the current connection state for both Perforce ALM and Azure DevOps (without revealing credentials).
+Returns the current connection state for both Perforce ALM and Azure DevOps (without revealing credentials). Includes the current default project.
+
+#### `set_default_project`
+Set the default project for the session. Once set, all tools that accept `project_name` will use this project when the argument is omitted.
+
+| Argument | Description |
+|----------|-------------|
+| `project_name` | Name of the Helix ALM project to use as the default |
+
+#### `get_field_values`
+Discover the values currently in use for a specific field on requirements or test cases. Useful for finding valid Priority, Status, Category, or other menu field values before creating or updating items.
+
+| Argument | Description |
+|----------|-------------|
+| `project_name` | Helix ALM project (uses default if omitted) |
+| `item_type` | `"requirements"` or `"testCases"` |
+| `field_label` | Field name to discover values for (e.g. `"Priority"`, `"Status"`, `"Category"`) |
+
+> **Note:** This discovers values from existing items, so values that haven't been used yet may not appear. If the field name is not found, the tool returns the list of available field labels.
 
 ---
 
@@ -144,9 +165,13 @@ and description "The system must support SAML 2.0 SSO for all users."
 
 | Tool | Description |
 |------|-------------|
-| `create_test_case` | Create a new test case with optional steps (steps are added via a separate PUT to the `/steps` sub-resource after creation) |
+| `list_test_cases` | List test cases in a project (supports column selection and saved filters) |
+| `search_test_cases` | Full-text search across Summary and Description fields |
 | `get_test_case` | Get full details of a test case by tag or ID, including steps and linked items |
-| `update_test_case` | Update fields and/or steps on an existing test case |
+| `get_test_case_types` | List the test case types in use in a project |
+| `create_test_case` | Create a new test case with optional steps (steps are added via a separate PUT to the `/steps` sub-resource after creation) |
+| `update_test_case` | Update fields and/or steps on an existing test case (replaces all steps) |
+| `add_test_case_steps` | Append steps to an existing test case without removing current steps |
 | `link_test_case_to_requirement` | Link a test case to a requirement using the "Requirement Tested By" traceability link |
 
 #### `create_test_case` arguments
@@ -192,7 +217,17 @@ Returns the test case fields, all steps (with expected results), and linked item
 | `steps_json` | JSON array of steps to replace existing steps (same format as `create_test_case`) |
 | `additional_fields` | JSON object of extra field values |
 
-All arguments are optional — only the fields you provide will be updated. Steps are replaced entirely (not merged).
+All arguments are optional — only the fields you provide will be updated. Steps are replaced entirely (not merged). To add steps without removing existing ones, use `add_test_case_steps` instead.
+
+#### `add_test_case_steps` arguments
+
+| Argument | Description |
+|----------|-------------|
+| `project_name` | Helix ALM project (uses default if omitted) |
+| `test_case_identifier` | Test case tag (e.g. `TC-382`) or numeric ID |
+| `steps_json` | JSON array of steps to **append** (same format as `create_test_case`) |
+
+This tool fetches the existing steps, appends the new ones, and PUTs the combined list back to the API.
 
 #### `link_test_case_to_requirement` arguments
 
@@ -222,16 +257,19 @@ and steps: navigate to login, click SSO, verify redirect. Then link it to requir
 | `add_to_document_tree` | Add requirements as children under a specific node |
 | `add_to_document_tree_top_level` | Add requirements as top-level nodes in a document |
 | `get_document_requirements` | List all requirements belonging to a document (via Document List field) |
+| `create_document_snapshot` | Create a point-in-time snapshot of a document for baselining |
 
 ---
 
 ### Automation Suites
 
+All automation suite tools accept a suite **name** (e.g. `"Regression Suite"`) or **numeric ID**.
+
 | Tool | Description |
 |------|-------------|
 | `list_automation_suites` | List all automation suites in a project |
 | `create_automation_suite` | Create a new automation suite |
-| `get_automation_suite` | Get details of a specific suite |
+| `get_automation_suite` | Get details of a specific suite (by name or ID) |
 | `list_automation_builds` | List builds submitted to a suite |
 | `submit_automation_build` | Submit test results as a build (full JSON format) |
 | `submit_automation_results_simple` | Submit results using comma-separated pass/fail/skip lists |
@@ -260,7 +298,7 @@ Sample XML files are provided in the `samples/` directory.
 | `azdo_list_pipelines` | List build pipelines in an Azure DevOps project |
 | `azdo_list_builds` | List recent builds, optionally filtered by pipeline |
 | `azdo_get_test_results` | Get test results from a specific build |
-| `azdo_submit_to_helix_alm` | Fetch results from a build and submit them to a Perforce ALM automation suite |
+| `azdo_submit_to_helix_alm` | Fetch results from a build and submit them to a Perforce ALM automation suite (by name or ID) |
 | `azdo_submit_latest_to_helix_alm` | Same as above but automatically picks the latest completed build |
 
 **Example end-to-end:**
@@ -283,6 +321,7 @@ All variables are optional — the server falls back to the `configure_*` tools 
 | `HELIX_ALM_API_KEY` | API key (preferred) |
 | `HELIX_ALM_API_SECRET` | API secret (preferred) |
 | `HELIX_ALM_SSL_VERIFY` | Set to `true` to enforce SSL certificate validation |
+| `HELIX_ALM_DEFAULT_PROJECT` | Default project name (optional — can also be set via `set_default_project`) |
 | `AZDO_ORG` | Azure DevOps organisation |
 | `AZDO_PROJECT` | Azure DevOps project |
 | `AZDO_PAT` | Azure DevOps personal access token |
